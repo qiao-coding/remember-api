@@ -21,8 +21,15 @@ export function buildApp(): FastifyInstance {
   // OpenAI-compatible 网关（API Key 鉴权）
   app.register(openAiRoutes, { prefix: "/v1" });
 
-  // 管理后台（admin session 鉴权）
-  app.register(managerRoutes, { prefix: "/api" });
+  // 管理后台（Supabase JWT 鉴权）——auth 模块与网关解耦：
+  // SUPABASE_URL 为空 = 网关-only 模式（只跑 /v1 + /health，不挂 /api），api 网关可独立部署。
+  if (env.SUPABASE_URL) {
+    app.register(managerRoutes, { prefix: "/api" });
+  } else {
+    app.log.warn(
+      "SUPABASE_URL 未配置：/api 管理路由未挂载（网关-only 模式，仅 /v1 + /health）",
+    );
+  }
 
   app.setErrorHandler((err: FastifyError, req, reply) => {
     // OpenAI 兼容错误格式（对 /v1 请求）

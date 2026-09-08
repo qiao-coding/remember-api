@@ -9,7 +9,8 @@ try {
 
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL 必填"),
-  SUPABASE_URL: z.string().min(1, "SUPABASE_URL 必填"),
+  // auth 模块与 api 网关解耦：SUPABASE_URL 为空 = 网关-only 模式（仅 /v1 + /health，不挂 /api 管理路由）
+  SUPABASE_URL: z.string().optional().default(""),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(""),
   DEEPSEEK_API_KEY: z.string().optional().default(""),
   DEEPSEEK_BASE_URL: z.string().optional().default("https://api.deepseek.com"),

@@ -10,14 +10,26 @@ import { env } from "../env.js";
  * - 校验签名 / exp / iss / aud，取 `sub` 作为用户 id。
  * - 首次登录时把 Supabase 用户同步进 public.users（外键父行），SELECT-then-INSERT 不覆盖已有姓名。
  */
-const jwks = createRemoteJWKSet(
-  new URL(`${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`),
-);
+// auth 模块与 api 网关解耦：SUPABASE_URL 为空 = 网关-only 模式（不挂 /api），启动时不应构造 JWKS。
+// 懒初始化：仅完整形态（注册 /api）真正调用本 hook 时才建远程 JWKS。
+let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
+function getJwks() {
+  if (!env.SUPABASE_URL) {
+    throw new Error("auth 模块未启用：SUPABASE_URL 未配置");
+  }
+  jwks ??= createRemoteJWKSet(
+    new URL(`${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`),
+  );
+  return jwks;
+}
 
 export async function supabaseAuthHook(
   req: FastifyRequest,
   reply: FastifyReply,
 ): Promise<FastifyReply | undefined> {
+  if (!env.SUPABASE_URL) {
+    return reply.code(500).send({ error: "auth 模块未启用（SUPABASE_URL 未配置）" });
+  }
   const header = req.headers.authorization;
   const token = header?.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (!token) {
@@ -26,7 +38,7 @@ export async function supabaseAuthHook(
 
   let payload;
   try {
-    ({ payload } = await jwtVerify(token, jwks, {
+    ({ payload } = await jwtVerify(token, getJwks(), {
       issuer: `${env.SUPABASE_URL}/auth/v1`,
       audience: "authenticated",
     }));
