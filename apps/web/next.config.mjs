@@ -1,3 +1,5 @@
+import { createMDX } from "fumadocs-mdx/next";
+
 /** @type {import('next').NextConfig} */
 const API_URL = process.env.API_URL ?? "http://localhost:4000";
 
@@ -11,4 +13,7 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// 公开 docs（Fumadocs）：source.config.ts -> content/docs -> .source
+const withMDX = createMDX();
+
+export default withMDX(nextConfig);

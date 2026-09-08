@@ -1,0 +1,63 @@
+---
+title: OpenAI 兼容 API
+description: remember-api 暴露标准的 OpenAI 兼容接口——一个 Base URL + 一个 API Key + 一个 model，任何支持 OpenAI 协议的 SDK / 客户端都能直接用。
+---
+
+# OpenAI 兼容 API
+
+remember-api 暴露标准的 OpenAI 兼容接口，任何支持 OpenAI 协议的 SDK / 客户端都能直接用：一个 `Base URL` + 一个 `API Key` + 一个 `model`。
+
+## Base URL 与认证
+
+- **Base URL**：`<你的实例域名>/v1`（登录控制台后可在[快速开始](/docs/quickstart)看到真实值）。
+- **认证**：HTTP Header `Authorization: Bearer <API Key>`。Key 在控制台「API Keys」创建。
+
+## 端点
+
+### GET /v1/models —— 列出可用模型
+
+返回这个 key 可用的个人 model 列表。每个 key 都绑定一个个人 model（子 agent），所以这里只会列出它绑定的那一个。客户端做模型下拉时通常会自动调它。
+
+```bash
+curl "<你的实例域名>/v1/models" \
+  -H "Authorization: Bearer rma_你的Key"
+```
+
+### POST /v1/chat/completions —— 对话
+
+请求体与 OpenAI 兼容；流式用标准 SSE。
+
+```bash
+curl -N "<你的实例域名>/v1/chat/completions" \
+  -H "Authorization: Bearer rma_你的Key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "你的个人model名",
+    "messages": [{ "role": "user", "content": "hi" }],
+    "stream": true
+  }'
+```
+
+- `model`：填 `/v1/models` 返回的个人 model 名（不是 deepseek-chat 这类上游原始名）。
+- 可选顶层字段 `remember.project`：把本次请求与记忆桶显式指到某个项目。**key 已绑定个人 model，带它会返回 403**（隔离：每个 key 只看它绑定 model 所属项目）。
+- 关闭 `stream` 即普通 JSON 响应。
+
+> **key 的隔离语义**：每个 key 都绑定一个个人 model（子 agent），model 名即便写成上游别名（如 deepseek-chat）也会被当作绑定 model 处理；请求「其它 model」或带 remember.project 则会被 403 拒绝。
+
+## 错误码
+
+错误响应体形如 `` { "error": { "message": "…", "code": "…" } } ``。
+
+| 状态码 | 含义 | 常见触发 |
+|---|---|---|
+| `401` | 未认证 / Key 无效或已禁用 | Key 拼错、已禁用、或后端不认该前缀 |
+| `403` | 绑定冲突（`profile_not_allowed`） | 绑定 key 请求了其它 model，或带了 `remember.project` |
+| `404` | 找不到资源 | 个人 model 名拼错、或项目不存在 |
+| `400` | 请求体不合法 | 缺 model / messages，或参数类型不对 |
+| `5xx` | 服务端 / 上游错误 | 上游 Provider 挂了，或网关自身异常 |
+
+## 自定义上游（可选）
+
+除了内置的 deepseek / openai / anthropic / openrouter，可以在控制台加一个「自定义」Provider，填你自己的 OpenAI 兼容地址与 Key——网关会把个人 model 转发到那里，记忆逻辑不变。
+
+- 个人 model 与上游地址是两回事：换上游只换转发目标，不改记忆与 Skills。
