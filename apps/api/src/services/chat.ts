@@ -62,6 +62,33 @@ export interface PreparedChat {
   memoryEnabled: boolean;
 }
 
+/**
+ * 生态消息 → 我们能送上游的形态：
+ *  - developer 角色归一为 system（DeepSeek 只认 system；prompt-cache 语义等同）
+ *  - content 数组（OpenAI chat 合法多段 part：字符串 / {type:"text",text}）拼成纯文本
+ *  - 空 content → ""（别把 null 塞进逐字历史/折叠块）
+ */
+function contentToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (content == null) return "";
+  if (Array.isArray(content)) {
+    return content
+      .map((p) =>
+        typeof p === "string" ? p : (p as { text?: string })?.text ?? "",
+      )
+      .join("");
+  }
+  return String(content);
+}
+
+function normalizeMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) => ({
+    ...m,
+    role: ((m.role as string) === "developer" ? "system" : m.role) as ChatMessage["role"],
+    content: contentToText(m.content),
+  }));
+}
+
 /** 合并客户端 system 消息为一段纯文本（与我们的固定内容拼进同一条 system） */
 function clientSystemText(messages: ChatMessage[]): string {
   return messages
@@ -116,8 +143,11 @@ export async function prepareChat(
   const memoryEnabled = profile.memoryEnabled && req.remember?.memory !== false;
   const bucketId = profile.projectId; // profile 强制挂 project；id 即记忆桶
 
+  // developer → system、content 数组 → 纯文本（Codex/生态消息），后续统一用 msgs
+  const msgs = normalizeMessages(req.messages);
+
   const lastUser =
-    [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    [...msgs].reverse().find((m) => m.role === "user")?.content ?? "";
 
   let preferences: { type: MemoryType; content: string }[] = [];
   let retrieved: { type: MemoryType; content: string }[] = [];
@@ -161,11 +191,11 @@ export async function prepareChat(
   }
 
   const built = buildContext({
-    clientSystem: clientSystemText(req.messages),
+    clientSystem: clientSystemText(msgs),
     profileSystemPrompt: profile.systemPrompt,
     preferences,
     retrievedMemories: retrieved,
-    messages: req.messages,
+    messages: msgs,
   });
 
   // 上游 key：env 基建 key（providerConfigs 加密 key 不再参与 chat 路径）
@@ -207,9 +237,9 @@ function turnInput(
     projectId: prepared.projectId,
     profileId: prepared.profileId,
     providerName: prepared.provider.id,
-    userMessage: lastUser,
+    userMessage: contentToText(lastUser),
     assistantContent,
-    messages: req.messages,
+    messages: normalizeMessages(req.messages),
     memoryEnabled: prepared.memoryEnabled,
   };
 }

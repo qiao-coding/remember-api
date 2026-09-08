@@ -13,9 +13,20 @@ import {
   streamChat,
 } from "../services/chat.js";
 
+// content 容忍 OpenAI chat 两种合法形态：字符串 或 多段 part 数组（{type:"text",text}），
+// chat.ts 统一归一为纯文本再送上游（DeepSeek 不收数组）。
+const ChatContentSchema = z
+  .union([
+    z.string(),
+    z.array(z.union([z.string(), z.object({ text: z.string().optional() })])),
+    z.null(),
+  ])
+  .optional();
+
 const ChatMessageSchema = z.object({
-  role: z.enum(["system", "user", "assistant", "tool"]),
-  content: z.string().nullable(),
+  // 容忍 developer 角色（Codex/部分客户端经 CC-Switch 桥接会带）；chat.ts 归一为 system 送上游。
+  role: z.enum(["system", "developer", "user", "assistant", "tool"]),
+  content: ChatContentSchema,
 });
 
 const ChatBodySchema = z.object({
@@ -50,7 +61,19 @@ export async function openAiRoutes(app: FastifyInstance) {
   });
 
   app.post("/chat/completions", async (req, reply) => {
-    const body = ChatBodySchema.parse(req.body) as ChatCompletionRequest;
+    let body: ChatCompletionRequest;
+    try {
+      body = ChatBodySchema.parse(req.body) as ChatCompletionRequest;
+    } catch (err) {
+      // 实锤：CC-Switch/Codex 桥的 400 往往卡在入站 schema——把被拒的原始体打出来定位
+      console.error(
+        "[v1] 入站体被 schema 拒绝:",
+        JSON.stringify(req.body)?.slice(0, 2000),
+        "\n  原因:",
+        (err as Error).message,
+      );
+      throw err;
+    }
     const userId = req.user!.id;
 
     let prepared;
