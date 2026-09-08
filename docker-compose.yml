@@ -47,7 +47,9 @@ services:
       # fastembed 模型缓存（与 qdrant/history 同卷持久化）
       FASTEMBED_CACHE_PATH: /var/lib/mem0/model_cache
       HF_HUB_OFFLINE: "1"
-      HF_ENDPOINT: "https://hf-mirror.com"
+      # HF 下载端点：大陆默认 hf-mirror；海外部署 export HF_ENDPOINT=https://huggingface.co
+      # （compose 变量插值读 shell env；download-model.sh 亦用 -e 覆盖，见 runbook 第 4 步）
+      HF_ENDPOINT: "${HF_ENDPOINT:-https://hf-mirror.com}"
       MEM0_TELEMETRY: "false"
     volumes:
       - mem0_data:/var/lib/mem0
