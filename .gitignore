@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+build/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+# fumadocs codegen
+.source/
+
+# env & secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# local DB backups (contain user emails / api key hashes — never commit)
+.tmp-backup/
+
+# transient local UX-research downloads (never commit)
+.tmp-ux-res/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / os
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# mem0 bridge python venv + local data
+.mem0-venv/
+.mem0/
