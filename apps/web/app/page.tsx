@@ -16,18 +16,18 @@ const clients = [
 const pillars = [
   {
     no: "01",
-    title: "不用重复介绍自己",
-    text: "在一个工具里告诉它的事，会写进你的个人 AI；换到任何设备，它都自动带上同一份上下文。",
+    title: "你在哪，AI 都在",
+    text: "公司电脑、家里笔记本、手机、浏览器——任意地点、任意设备连上同一个 API，接进来的都是同一个你。",
   },
   {
     no: "02",
-    title: "项目之间互不混淆",
-    text: "每个项目的记忆按项目隔离保存：A 项目的决策，不会带进 B 项目。",
+    title: "工具与模型，随你换",
+    text: "写代码用 Claude、聊天用 DeepSeek、推理用 GPT。工具和模型随便换，你的 AI 身份与记忆不受影响。",
   },
   {
     no: "03",
-    title: "记忆归你，随时可改",
-    text: "AI 记错可以改，重要事实可以固定。它不是黑箱，数据始终属于你。",
+    title: "数据主权",
+    text: "记忆归你、随时可查可改可导出。你的 AI 不属于某个模型厂商，而属于你。",
   },
 ];
 
@@ -44,8 +44,8 @@ const setupSteps = [
   },
   {
     no: "03",
-    title: "填进你用的每台设备",
-    text: "电脑、手机、浏览器……所有设备都接上同一个你，共享同一份记忆。",
+    title: "接进每台设备，随处用",
+    text: "把连接信息填进你在用的每台设备与每个 AI 客户端——公司、家里、手机上，都是同一个你，随时继续。",
   },
 ];
 
@@ -100,14 +100,13 @@ export default function Home() {
         <div className="relative mx-auto grid max-w-7xl items-center gap-10 pb-16 lg:grid-cols-[minmax(0,1.05fr)_minmax(400px,0.82fr)]">
           <div className="max-w-3xl">
             <Badge className="border border-white/15 bg-white/10 text-cyan-100 hover:bg-white/10">
-              个人 AI · 所有设备共享同一份记忆
+              Personal AI Gateway
             </Badge>
             <h1 className="mt-7 text-5xl font-semibold leading-[1.04] sm:text-6xl lg:text-7xl">
-              让所有支持 AI 的设备，都记得同一个你
+              你在哪，你的 AI 就在哪
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-white/72">
-              remember-api 把你的偏好、项目记忆和数据，沉淀成一个属于你的个人 AI。
-              接入所有支持 AI 的工具与设备——电脑、手机、浏览器。共享同一份记忆，写一次，处处记得。
+              remember-api 把你的身份、偏好、项目与记忆，做成一个独立存在的 Personal AI。无论在公司电脑、家里的笔记本还是手机上——连上同一个 API，接进来的都是同一个你。工具换、地点换、模型换，你的 AI 始终记得你。
             </p>
             <div className="mt-9 flex flex-wrap items-center gap-3">
               <Button asChild size="lg" className="bg-[#19b8a8] text-white hover:bg-[#139e91]">
@@ -130,8 +129,8 @@ export default function Home() {
         <div className="mx-auto max-w-7xl">
           <SectionIntro
             eyebrow="为什么不一样"
-            title="写一次，处处都记得"
-            text="不用在每个工具里重新介绍自己。把长期有用的信息写进同一个个人 AI，它会自动出现在你每一次对话、每一台设备上。"
+            title="你是一个独立的人，AI 也该独立存在"
+            text="今天的 AI 把你锁在某个 App、某台设备、某个模型里。remember-api 把你的身份、记忆和偏好抽出来独立存在——你在任何地方打开任何设备，接到的都是同一个你。"
           />
           <div className="mt-10 grid gap-0 overflow-hidden rounded-lg border border-white/10 bg-[#080b10] lg:grid-cols-3 lg:divide-x lg:divide-white/8">
             {pillars.map((pillar) => (
@@ -150,8 +149,8 @@ export default function Home() {
           <div>
             <SectionIntro
               eyebrow="三步接入"
-              title="让所有设备接上同一个你"
-              text="你的个人 AI 对每个工具和设备来说只是多了一个选项。填上它，你就接进来了——不用学任何新东西。"
+              title="三步，让所有设备接上你的 AI"
+              text="创建你的个人 AI，复制连接信息，填进你在用的每一台设备。之后就只有一个入口——你的 AI。"
             />
             <div className="mt-10 overflow-hidden rounded-lg border border-white/10 bg-white/[0.045]">
               {setupSteps.map((step, index) => (
@@ -175,9 +174,9 @@ export default function Home() {
 
       <section className="border-t border-white/10 bg-[#0d1118] px-4 py-16 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-3xl rounded-lg border border-white/10 bg-[#080b10] p-6 text-center sm:p-10">
-          <h2 className="text-2xl font-semibold sm:text-3xl">让所有设备，都记得同一个你</h2>
+          <h2 className="text-2xl font-semibold sm:text-3xl">你在哪，你的 AI 就在哪</h2>
           <p className="mx-auto mt-3 max-w-xl text-sm leading-7 text-white/60 sm:text-base">
-            创建你的个人 AI，把它接进你用的每一台设备。偏好、项目与数据，只属于你，也一直陪着你。
+            创建一个独立存在的个人 AI。不管在公司、在家、手机上，接进来都是同一个你——身份、记忆与上下文只属于你。
           </p>
           <Button asChild size="lg" className="mt-7 bg-[#19b8a8] text-white hover:bg-[#139e91]">
             <Link href="/login">
@@ -203,9 +202,9 @@ function SectionIntro({ eyebrow, title, text }: { eyebrow: string; title: string
 
 function MemoryHub() {
   const features = [
-    { icon: BrainCircuit, text: "只属于你的那一个个人 AI" },
-    { icon: Database, text: "所有设备共享同一份记忆" },
-    { icon: PencilLine, text: "偏好与项目数据，随时可查可改" },
+    { icon: BrainCircuit, text: "一个独立存在、属于你的个人 AI" },
+    { icon: Database, text: "任何设备、任何地点，接入都是同一个你" },
+    { icon: PencilLine, text: "你的数据，随时可查、可改、可导出" },
   ];
   return (
     <aside className="rounded-lg border border-white/12 bg-[#0b1018]/88 p-6 shadow-[0_30px_90px_rgba(0,0,0,0.48)] backdrop-blur-xl">
@@ -253,12 +252,13 @@ function MemoryHub() {
 function ConnectCard() {
   return (
     <aside className="h-fit rounded-lg border border-white/10 bg-[#111722] p-5 sm:p-6">
-      <p className="text-sm font-semibold">接入之后，你会拥有</p>
+      <p className="text-sm font-semibold">一个入口，模型随你换</p>
       <div className="mt-4 space-y-3">
         {[
-          "一个只属于你的个人 AI",
-          "所有设备共享的同一份记忆",
-          "随时可查、可改的偏好与项目数据",
+          "写代码 → Claude",
+          "日常聊天 → DeepSeek",
+          "复杂推理 → GPT",
+          "隐私任务 → 本地模型",
         ].map((item) => (
           <div key={item} className="flex gap-3 rounded-lg border border-white/10 bg-[#090d13] px-3 py-2.5">
             <Check className="mt-0.5 size-4 shrink-0 text-cyan-200" />
@@ -267,7 +267,7 @@ function ConnectCard() {
         ))}
       </div>
       <p className="mt-5 text-sm leading-6 text-white/55">
-        以后无论在哪台设备、哪个工具里提问，它都带着你的上下文回答。
+        不同任务交给不同模型，但运行的始终是同一个人 AI——它记得你，不用重新熟悉。
       </p>
     </aside>
   );

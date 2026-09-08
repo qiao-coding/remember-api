@@ -79,7 +79,6 @@ const TITLE_MAP: Record<string, string> = {
   "/usage": "Usage",
   "/keys": "API Keys",
   "/providers": "Providers",
-  "/docs": "Docs",
   "/settings": "Settings",
 };
 
