@@ -9,7 +9,6 @@ import {
   prepareChat,
   ProfileNotAllowedError,
   ProfileNotFoundError,
-  ProjectNotFoundError,
   runChat,
   streamChat,
 } from "../services/chat.js";
@@ -75,16 +74,6 @@ export async function openAiRoutes(app: FastifyInstance) {
             type: "model_not_found",
             code: "model_not_found",
             param: "model",
-          },
-        });
-      }
-      if (err instanceof ProjectNotFoundError) {
-        return reply.code(404).send({
-          error: {
-            message: err.message,
-            type: "invalid_request_error",
-            code: "project_not_found",
-            param: "remember.project",
           },
         });
       }

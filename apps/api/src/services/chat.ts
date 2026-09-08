@@ -1,5 +1,5 @@
-import { and, eq, inArray, or } from "drizzle-orm";
-import { getDb, profiles, projects, providerConfigs, skills } from "@remember/db";
+import { and, eq } from "drizzle-orm";
+import { getDb, profiles } from "@remember/db";
 import {
   allocateMemoryBudget,
   buildContext,
@@ -20,9 +20,12 @@ import {
   type ProviderId,
 } from "@remember/shared";
 import { env } from "../env.js";
-import { decryptSecret } from "../lib/crypto.js";
 import { recordUsage } from "./usage.js";
-import { writeTurnMemories } from "./memory-write.js";
+import {
+  writeTurnMemories,
+  type TurnMemoryInput,
+} from "./memory-write.js";
+import { maybeArchiveLongConversation } from "./memory-archive.js";
 
 export class ProfileNotFoundError extends Error {
   constructor(name: string) {
@@ -31,14 +34,7 @@ export class ProfileNotFoundError extends Error {
   }
 }
 
-export class ProjectNotFoundError extends Error {
-  constructor(ref: string) {
-    super(`Project "${ref}" 不存在或不属于当前用户`);
-    this.name = "ProjectNotFoundError";
-  }
-}
-
-/** key 已绑定某个人 model，却请求了别的 model / 跨桶 project —— 隔离拒绝（403） */
+/** key 已绑定某个人 model，却请求了别的 model / 指定了不支持参数 —— 隔离拒绝（403） */
 export class ProfileNotAllowedError extends Error {
   param: string;
   constructor(message: string, param = "model") {
@@ -55,33 +51,47 @@ export interface PreparedChat {
   baseModel: string;
   temperature: number | null;
   maxTokens: number | null;
-  projectId: string | null;
+  /** 记忆桶命名空间 = 绑定 project 的 id（薄桥只拿它当桶键，不再读 project 内容） */
+  projectId: string;
   provider: ModelProvider;
   finalMessages: ChatMessage[];
   memoryTokens: number;
   skillTokens: number;
   breakdown: ContextBreakdown;
+  /** 用户级 + 请求级记忆开关；false 时短窗写入与长对话归档都跳过 */
+  memoryEnabled: boolean;
 }
 
+/** 合并客户端 system 消息为一段纯文本（与我们的固定内容拼进同一条 system） */
+function clientSystemText(messages: ChatMessage[]): string {
+  return messages
+    .filter((m) => m.role === "system")
+    .map((m) => String(m.content ?? "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/**
+ * 薄桥核心：解析绑定个人 model + 两区拼装出站消息。
+ * 只做 4 件事：认 profile、查记忆、拼 prompt、交给上游。不碰 project/skill/provider 加密/预算实体。
+ */
 export async function prepareChat(
   userId: string,
   req: ChatCompletionRequest,
   keyProfileId: string,
 ): Promise<PreparedChat> {
-  const db = getDb();
-
   // 强制隔离：key 恒绑定一个个人 model（auth 层已保证 keyProfileId 非空）。
-  // 若为空则属防御性路径（理论上不会发生），直接抛错，回收"全量按 model 名解析"旧行为。
   if (!keyProfileId) {
     throw new ProfileNotFoundError("(未绑定个人 model)");
   }
-  // ── 选 profile ──
-  const profile = await db.query.profiles.findFirst({
+
+  const profile = await getDb().query.profiles.findFirst({
     where: and(eq(profiles.id, keyProfileId), eq(profiles.userId, userId)),
   });
   if (!profile) throw new ProfileNotFoundError(keyProfileId);
+  // 请求其它本用户的 model（key 绑定的那个之外）→ 403 隔离
   if (req.model) {
-    const requested = await db.query.profiles.findFirst({
+    const requested = await getDb().query.profiles.findFirst({
       where: and(eq(profiles.userId, userId), eq(profiles.name, req.model)),
     });
     if (requested && requested.id !== profile.id) {
@@ -90,19 +100,13 @@ export async function prepareChat(
       );
     }
   }
-
-  // ── 选 project / 记忆桶 ──
-  let project = null;
-  // 绑定 key 恒用绑定 profile 自己的 project；拒绝 remember.project 跨桶（防记忆外泄/串桶）
+  // 薄桥无跨桶概念：绑定 key 的记忆桶固定 = profile.projectId，不接受客户端指定
   if (req.remember?.project) {
     throw new ProfileNotAllowedError(
       `该 key 已绑定个人 model「${profile.name}」，不支持指定 remember.project`,
       "remember.project",
     );
   }
-  project = profile.projectId
-    ? await resolveProject(userId, profile.projectId)
-    : null;
 
   const memoryProvider = createMemoryProvider(
     env.MEM0_BASE_URL
@@ -110,87 +114,65 @@ export async function prepareChat(
       : undefined,
   );
   const memoryEnabled = profile.memoryEnabled && req.remember?.memory !== false;
+  const bucketId = profile.projectId; // profile 强制挂 project；id 即记忆桶
+
+  const lastUser =
+    [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
 
   let preferences: { type: MemoryType; content: string }[] = [];
   let retrieved: { type: MemoryType; content: string }[] = [];
-
   if (memoryEnabled) {
-    const lastUser =
-      [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const [prefs, globalMemories, projectMemories] = await Promise.all([
-      memoryProvider.search({
-        userId,
-        projectId: null,
-        pinnedOnly: true,
-        limit: 8,
-        query: "偏好 习惯 技术栈 风格",
-      }),
-      memoryProvider.search({
-        userId,
-        projectId: null,
-        query: lastUser.slice(0, 200),
-        limit: 8,
-      }),
-      project
-        ? memoryProvider.search({
-            userId,
-            projectId: project.id,
-            query: lastUser.slice(0, 200),
-            limit: 16,
-          })
-        : Promise.resolve([]),
-    ]);
+    try {
+      // 注意：mem0 /search 对空 query 会 500 → 两类检索都必须给非空 query。
+      const query = (lastUser || "我的偏好 习惯 技术栈 名字").slice(0, 200);
+      const [pinnedRows, hits] = await Promise.all([
+        memoryProvider.search({
+          userId,
+          projectId: bucketId,
+          query: "身份 名字 代号 技术栈 偏好 习惯",
+          limit: 8,
+        }),
+        memoryProvider.search({ userId, projectId: bucketId, query, limit: 16 }),
+      ]);
 
-    preferences = prefs
-      .filter((p) => p.type === "preference" && p.projectId === null)
-      .map((p) => ({ type: p.type, content: p.content }));
-    const budget = req.remember?.memoryBudget ?? profile.memoryBudget ?? 1500;
-    const cands = uniqueMemories([...projectMemories, ...globalMemories]);
-    const alloc = allocateMemoryBudget(
-      cands.map((c) => ({
-        id: c.id,
-        content: c.content,
-        type: c.type,
-        importance: c.importance,
-        pinned: c.pinned,
-        relevance: c.relevance ?? 0.5,
-      })),
-      budget,
-    );
-    retrieved = alloc.selected.map((m) => ({ type: m.type, content: m.content }));
+      preferences = pinnedRows
+        .filter((m) => m.type === "preference")
+        .map((m) => ({ type: m.type, content: m.content }));
+
+      const budget = req.remember?.memoryBudget ?? profile.memoryBudget ?? 1500;
+      const alloc = allocateMemoryBudget(
+        hits.map((m) => ({
+          id: m.id,
+          content: m.content,
+          type: m.type,
+          importance: m.importance,
+          pinned: m.pinned,
+          relevance: m.relevance ?? 0.5,
+        })),
+        budget,
+      );
+      retrieved = alloc.selected.map((m) => ({ type: m.type, content: m.content }));
+    } catch (err) {
+      // 记忆后端抖动/宕机 → 降级为无注入记忆继续（不拖垮整个 chat）
+      console.warn("[chat] 记忆召回失败，本轮不注入记忆:", err);
+      preferences = [];
+      retrieved = [];
+    }
   }
 
-  const skillRows = profile.skillIds.length
-    ? await db
-        .select()
-        .from(skills)
-        .where(and(eq(skills.userId, userId), inArray(skills.id, profile.skillIds)))
-    : [];
-
   const built = buildContext({
+    clientSystem: clientSystemText(req.messages),
     profileSystemPrompt: profile.systemPrompt,
     preferences,
-    project: project
-      ? {
-          name: project.name,
-          summary: project.summary,
-          architecture: project.architecture,
-          status: project.status,
-          decisions: project.decisions,
-          knownIssues: project.knownIssues,
-        }
-      : null,
     retrievedMemories: retrieved,
-    skills: skillRows.map((s) => ({ name: s.name, content: s.content })),
     messages: req.messages,
   });
 
-  const providerName = profile.provider as ProviderId;
-  const providerConfig = await resolveProviderConfig(userId, providerName);
+  // 上游 key：env 基建 key（providerConfigs 加密 key 不再参与 chat 路径）
   const provider = createProvider({
-    provider: providerName,
-    apiKey: providerConfig.apiKey,
-    baseUrl: providerConfig.baseUrl,
+    provider: profile.provider as ProviderId,
+    apiKey: env.DEEPSEEK_API_KEY,
+    baseUrl: env.DEEPSEEK_BASE_URL,
     defaultModel: profile.model,
   });
 
@@ -201,74 +183,36 @@ export async function prepareChat(
     baseModel: profile.model,
     temperature: profile.temperature,
     maxTokens: profile.maxTokens,
-    projectId: project?.id ?? null,
+    projectId: bucketId,
     provider,
     finalMessages: built.messages,
     memoryTokens:
       built.breakdown.preferenceTokens + built.breakdown.memoryTokens,
     skillTokens: built.breakdown.skillTokens,
     breakdown: built.breakdown,
+    memoryEnabled,
   };
 }
 
-async function resolveProject(userId: string, ref: string) {
-  const row = await getDb().query.projects.findFirst({
-    where: and(
-      eq(projects.userId, userId),
-      or(eq(projects.id, ref), eq(projects.name, ref)),
-    ),
-  });
-  if (!row) throw new ProjectNotFoundError(ref);
-  return row;
+/** 组装写/归档共用的回合输入（fire-and-forget） */
+function turnInput(
+  prepared: PreparedChat,
+  req: ChatCompletionRequest,
+  assistantContent: string,
+): TurnMemoryInput {
+  const lastUser =
+    [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  return {
+    userId: prepared.userId,
+    projectId: prepared.projectId,
+    profileId: prepared.profileId,
+    providerName: prepared.provider.id,
+    userMessage: lastUser,
+    assistantContent,
+    messages: req.messages,
+    memoryEnabled: prepared.memoryEnabled,
+  };
 }
-
-function uniqueMemories<T extends { id: string }>(items: T[]): T[] {
-  const seen = new Set<string>();
-  const result: T[] = [];
-  for (const item of items) {
-    if (seen.has(item.id)) continue;
-    seen.add(item.id);
-    result.push(item);
-  }
-  return result;
-}
-
-/**
- * 解析 Provider 真实调用配置。
- * 用户保存的 providerConfigs（加密 key + baseUrl）优先；
- * 其次环境变量兜底（目前仅 deepseek 提供 DEEPSEEK_API_KEY）；
- * 都没有 → 空 apiKey（工厂回退 MockProvider 离线链路）。
- */
-async function resolveProviderConfig(
-  userId: string,
-  provider: ProviderId,
-): Promise<{ apiKey: string; baseUrl?: string }> {
-  const cfg = await getDb().query.providerConfigs.findFirst({
-    where: and(
-      eq(providerConfigs.userId, userId),
-      eq(providerConfigs.provider, provider),
-    ),
-  });
-
-  if (cfg?.apiKeyEncrypted && env.ENCRYPTION_KEY) {
-    try {
-      return {
-        apiKey: decryptSecret(cfg.apiKeyEncrypted, env.ENCRYPTION_KEY),
-        baseUrl: cfg.baseUrl ?? envBaseUrl(provider),
-      };
-    } catch {
-      // 解密失败回退环境变量
-    }
-  }
-  return { apiKey: envApiKey(provider), baseUrl: envBaseUrl(provider) };
-}
-
-const envApiKey = (provider: ProviderId): string =>
-  provider === "deepseek" ? env.DEEPSEEK_API_KEY : "";
-const envBaseUrl = (provider: ProviderId): string | undefined =>
-  provider === "deepseek" && env.DEEPSEEK_BASE_URL
-    ? env.DEEPSEEK_BASE_URL
-    : undefined;
 
 /** 非流式 */
 export async function runChat(prepared: PreparedChat, req: ChatCompletionRequest) {
@@ -296,15 +240,9 @@ export async function runChat(prepared: PreparedChat, req: ChatCompletionRequest
     latencyMs,
   });
 
-  const lastUser =
-    [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
-  void writeTurnMemories({
-    userId: prepared.userId,
-    projectId: prepared.projectId,
-    userMessage: lastUser,
-    assistantContent: result.content,
-    providerName: prepared.provider.id,
-  });
+  const input = turnInput(prepared, req, result.content);
+  void writeTurnMemories(input);
+  void maybeArchiveLongConversation(input);
 
   return result;
 }
@@ -370,15 +308,9 @@ export async function* streamChat(
           latencyMs,
         });
       }
-      const lastUser =
-        [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
-      void writeTurnMemories({
-        userId: prepared.userId,
-        projectId: prepared.projectId,
-        userMessage: lastUser,
-        assistantContent: finalContent,
-        providerName: prepared.provider.id,
-      });
+      const input = turnInput(prepared, req, finalContent);
+      void writeTurnMemories(input);
+      void maybeArchiveLongConversation(input);
     } catch {
       // 收尾失败不影响流
     }

@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -187,6 +188,29 @@ export const requestUsage = pgTable(
     index("request_usage_profile_idx").on(t.profileId),
     index("request_usage_project_idx").on(t.projectId),
   ],
+);
+
+/**
+ * conversation_watermarks —— 长对话归档的进度水线。
+ * 每 (user_id, project_scope) 一行；conversation_id 变了（换新对话/萎缩重置）→ 水线重算。
+ * 存 Postgres（非 mem0）理由：api 无状态、mem0 哨兵会污染检索且 add 不原地更新；
+ * ON CONFLICT upsert 精确、并发友好，水线在提炼写成功后才推进。
+ */
+export const conversationWatermarks = pgTable(
+  "conversation_watermarks",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** projectId ?? "__global__"（避免可空复合主键） */
+    projectScope: text("project_scope").notNull(),
+    /** sha1(hex) 第一条非 system 用户消息 → 跨累积轮次稳定、换对话才变 */
+    conversationId: text("conversation_id").notNull(),
+    /** 上次已归档到的 token 位置（该 watermark 推进后不重归档） */
+    lastArchivedTokens: integer("last_archived_tokens").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.projectScope] })],
 );
 
 export const userRelations = relations(users, ({ many }) => ({

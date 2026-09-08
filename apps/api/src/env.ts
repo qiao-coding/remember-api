@@ -20,6 +20,17 @@ const EnvSchema = z.object({
   ENCRYPTION_KEY: z.string().optional().default("change-me-in-production"),
   PORT: z.coerce.number().optional().default(4000),
   HOST: z.string().optional().default("0.0.0.0"),
+  // ── 长对话 LLM 归档（全部可选带默认，不配即归档关闭路径仍安全）──
+  // thresholdTokens：累计对话 token 到这个值才触发归档（demo 可调小，如 1500）
+  ARCHIVE_THRESHOLD_TOKENS: z.coerce.number().optional().default(6000),
+  // growthRatio：同一对话距上次归档增长 ≥ ratio×threshold 才再次归档（默认 1 = 每满一档归档一次）
+  ARCHIVE_GROWTH_RATIO: z.coerce.number().optional().default(1),
+  // 每次喂给提炼的转写上限（丢最旧）
+  ARCHIVE_MAX_TRANSCRIPT_TOKENS: z.coerce.number().optional().default(6000),
+  // 单次归档最多提炼条数
+  ARCHIVE_MAX_ITEMS: z.coerce.number().optional().default(12),
+  // 归档提炼用模型（默认网关同款）
+  ARCHIVE_MODEL: z.string().optional().default("deepseek-chat"),
   LOG_LEVEL: z
     .enum(["trace", "debug", "info", "warn", "error", "fatal"])
     .optional()
