@@ -213,6 +213,36 @@ export const conversationWatermarks = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.projectScope] })],
 );
 
+/**
+ * conversation_summaries —— 每 profile 一行的"会话交接摘要"单行两槽。
+ * 客户端无 resume（不像 Claude Code 靠 jsonl 续活上下文），跨会话的"同一人"续接由网关自己做：
+ *   - active_* = 当前会话滚动摘要（LLM 提炼，累积≥阈值才刷新）；
+ *   - prev_* = 上一段结束会话的冻结交接块 —— 新会话开场注入，且一旦冻结不再变 → system 前缀稳定、cache 不破。
+ * 键 = (user_id, profile_id)：每个子 agent(profile) 续自己的会话；记忆桶仍 project 级共享（见 profiles.projectId）。
+ */
+export const conversationSummaries = pgTable(
+  "conversation_summaries",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    profileId: text("profile_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    /** prev 交接块归属的会话 id（仅信息性，注入判定看 active） */
+    prevConversationId: text("prev_conversation_id").notNull().default(""),
+    prevSummaryText: text("prev_summary_text").notNull().default(""),
+    prevSummaryTokens: integer("prev_summary_tokens").notNull().default(0),
+    /** 当前会话滚动摘要（= maybeUpdateRecentThread 的产出；换新会话时被 seal 进 prev 并重置） */
+    activeConversationId: text("active_conversation_id").notNull().default(""),
+    activeSummaryText: text("active_summary_text").notNull().default(""),
+    /** 已摘要到的会话 token 位置（同会话增长 ≥ growth 才再次刷新） */
+    lastSummarizedTokens: integer("last_summarized_tokens").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.profileId] })],
+);
+
 export const userRelations = relations(users, ({ many }) => ({
   apiKeys: many(apiKeys),
   projects: many(projects),

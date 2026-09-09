@@ -7,6 +7,7 @@ import {
   type ChatResult,
   type ChatUsage,
   type ModelProvider,
+  type ToolCall,
 } from "./base.js";
 
 /**
@@ -82,7 +83,37 @@ export function createLanguageModel(
   ).chatModel(model);
 }
 
-/** 我们的 ChatMessage[] → AI SDK V4 prompt（只保留文本语义） */
+/** wire 层 assistant 携带的 tool_calls 形状（OpenAI 兼容） */
+interface WireToolCall {
+  id?: string;
+  function?: { name?: string; arguments?: unknown };
+}
+
+/** 上游返回的 arguments（stringified JSON）→ object（反向序列化要 object，否则二次包引号 → 400） */
+function parseArguments(args: unknown): Record<string, unknown> {
+  if (typeof args === "string") {
+    try {
+      return JSON.parse(args) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  if (args && typeof args === "object") return args as Record<string, unknown>;
+  return {};
+}
+
+/** 模型侧 tool-call 的 input → 我们 ToolCall.input（stringified JSON 字符串） */
+function stringifyToolInput(input: unknown): string {
+  if (input == null) return "";
+  if (typeof input === "string") return input;
+  try {
+    return JSON.stringify(input);
+  } catch {
+    return "";
+  }
+}
+
+/** 我们的 ChatMessage[] → AI SDK V4 prompt（文本 + 工具语义） */
 function toPrompt(messages: ChatMessage[]): Prompt {
   const out: Prompt = [];
   for (const m of messages) {
@@ -91,13 +122,46 @@ function toPrompt(messages: ChatMessage[]): Prompt {
       case "system":
         out.push({ role: "system", content: text });
         break;
-      case "assistant":
-        out.push({ role: "assistant", content: [{ type: "text", text }] });
+      case "assistant": {
+        // 工具轮：先 text part（有内容才推），再每 tool_calls → tool-call part
+        const parts: unknown[] = [];
+        if (text) parts.push({ type: "text", text });
+        for (const raw of m.tool_calls ?? []) {
+          const tc = raw as WireToolCall;
+          if (!tc?.id || !tc.function?.name) continue;
+          parts.push({
+            type: "tool-call",
+            toolCallId: tc.id,
+            toolName: tc.function.name,
+            input: parseArguments(tc.function.arguments),
+          });
+        }
+        // 兜底：纯空 assistant（无文本无工具）保持原出站形状
+        if (!parts.length) parts.push({ type: "text", text: "" });
+        out.push({ role: "assistant", content: parts } as Prompt[number]);
         break;
-      // tool 结果没有顶层角色：并入 user 文本，网关内模型不做工具调用
+      }
+      // tool 结果：有 tool_call_id + name 才是真 tool 消息 → tool-result part；
+      // 无标识（inbound 残留，无前导 assistant tool_calls）→ 兜底并入 user 文本
       case "tool":
+        if (m.tool_call_id && m.name) {
+          out.push({
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: m.tool_call_id,
+                toolName: m.name,
+                output: { type: "text", value: text },
+              },
+            ],
+          } as Prompt[number]);
+        } else {
+          out.push({ role: "user", content: [{ type: "text", text }] } as Prompt[number]);
+        }
+        break;
       case "user":
-        out.push({ role: "user", content: [{ type: "text", text }] });
+        out.push({ role: "user", content: [{ type: "text", text }] } as Prompt[number]);
         break;
     }
   }
@@ -120,6 +184,17 @@ function textFrom(parts: GenerateResult["content"]): string {
   return out;
 }
 
+/** 从 content parts 里提取工具调用（doGenerate 结果侧） */
+function extractToolCalls(content: GenerateResult["content"]): ToolCall[] {
+  const out: ToolCall[] = [];
+  for (const p of content) {
+    if (p.type === "tool-call") {
+      out.push({ id: p.toolCallId, name: p.toolName, input: stringifyToolInput(p.input) });
+    }
+  }
+  return out;
+}
+
 /** AI SDK 桥适配到统一的 ModelProvider 接口（chat.ts 消费面不变） */
 export class SdkModelProvider implements ModelProvider {
   readonly id: ProviderId;
@@ -138,17 +213,22 @@ export class SdkModelProvider implements ModelProvider {
       ...(req.temperature !== undefined && { temperature: req.temperature }),
       ...(req.max_tokens !== undefined && { maxOutputTokens: req.max_tokens }),
       ...(req.top_p !== undefined && { topP: req.top_p }),
+      // 工具定义仅在请求显式提供时附加；缺省不带，维持纯文本桥旧行为。
+      // 不给 toolChoice：V4 缺省 auto（模型自行决定是否调），透传类型又各家不一。
+      ...(req.tools?.length && { tools: req.tools as DoOptions["tools"] }),
     };
   }
 
   async chat(req: ChatRequest): Promise<ChatResult> {
     const gen = await this.modelFor(req.model).doGenerate(this.callOptions(req));
+    const toolCalls = extractToolCalls(gen.content);
     return {
       id: "chatcmpl-" + crypto.randomUUID(),
       model: req.model,
       content: textFrom(gen.content),
       finishReason: gen.finishReason?.unified ?? null,
       usage: toUsage(gen.usage),
+      ...(toolCalls.length ? { toolCalls } : {}),
     };
   }
 
@@ -158,6 +238,8 @@ export class SdkModelProvider implements ModelProvider {
       this.callOptions(req),
     );
     const reader = stream.getReader();
+    // 该轮累积的工具调用（挂在 finish chunk 上；忽略 tool-input-* 中间态）
+    const roundToolCalls: ToolCall[] = [];
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -169,6 +251,12 @@ export class SdkModelProvider implements ModelProvider {
             delta: { content: value.delta },
             finishReason: null,
           };
+        } else if (value.type === "tool-call") {
+          roundToolCalls.push({
+            id: value.toolCallId,
+            name: value.toolName,
+            input: stringifyToolInput(value.input),
+          });
         } else if (value.type === "finish") {
           yield {
             id,
@@ -176,6 +264,7 @@ export class SdkModelProvider implements ModelProvider {
             delta: {},
             finishReason: value.finishReason?.unified ?? null,
             ...(value.usage ? { usage: toUsage(value.usage) } : {}),
+            ...(roundToolCalls.length ? { toolCalls: roundToolCalls } : {}),
           };
         }
       }

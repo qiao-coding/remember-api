@@ -25,6 +25,10 @@ export interface BuildContextInput {
   preferences?: ContextMemoryItem[];
   /** 本轮检索记忆（query 相关，预算内）→ 折叠进尾部最后一条 user */
   retrievedMemories?: ContextMemoryItem[];
+  /** 上次会话交接摘要（[Recent Threads] 块）→ system；缺省不注入 */
+  recentThreadText?: string | null;
+  /** 工具型 recall 提示（[Memory] 块）→ system；缺省不注入 */
+  toolUseHint?: string | null;
   /** 客户端除 system 外的历史对话（user/assistant，逐字转发） */
   messages: ChatMessage[];
 }
@@ -38,6 +42,10 @@ export interface ContextBreakdown {
   memoryTokens: number;
   /** 恒 0：skill 内容不再注入 */
   skillTokens: number;
+  /** [Recent Threads] 交接块 token */
+  recentThreadTokens: number;
+  /** [Memory] recall 提示块 token */
+  toolHintTokens: number;
   /** 客户端历史对话 token */
   messageTokens: number;
 }
@@ -64,10 +72,16 @@ export function buildContext(input: BuildContextInput): BuildContextResult {
     : "";
 
   // ── system 区（稳定前缀）──
+  // 末尾两块都是会话级稳定内容：recentThreadText 一旦 seal 进 prev 即不变；
+  // toolUseHint 是常量提示。缺省为空 → 与旧布局逐字一致（context-layout.test 精确断言不破）。
+  const recentThreadText = input.recentThreadText?.trim() ?? "";
+  const toolHint = input.toolUseHint?.trim() ?? "";
   const systemContent = joinBlocks(
     input.clientSystem,
     profileBody ? `[Profile]\n${profileBody}` : "",
     prefBody ? `[User Preferences]\n${prefBody}` : "",
+    recentThreadText ? `[Recent Threads]\n${recentThreadText}` : "",
+    toolHint ? `[Memory]\n${toolHint}` : "",
   );
 
   // ── 历史：逐字转发（丢 system，避免客户端 system 与我们的重复/漂移）──
@@ -116,6 +130,8 @@ export function buildContext(input: BuildContextInput): BuildContextResult {
       projectTokens: 0,
       memoryTokens: estimateTokens(memoryText),
       skillTokens: 0,
+      recentThreadTokens: estimateTokens(recentThreadText),
+      toolHintTokens: estimateTokens(toolHint),
       messageTokens,
     },
   };

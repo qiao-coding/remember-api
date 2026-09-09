@@ -121,6 +121,181 @@ describe("SdkModelProvider.chat（非流式）", () => {
   });
 });
 
+describe("SdkModelProvider 工具透传（function calling）", () => {
+  const TOOL = {
+    type: "function" as const,
+    name: "recall_memories",
+    description: "查记忆",
+    inputSchema: { type: "object", properties: { query: { type: "string" } } },
+  };
+
+  it("非流式：出站带 tools；上游回 tool_calls → res.toolCalls(input stringified)", async () => {
+    const requests: { body: any }[] = [];
+    const fetch = async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      requests.push({ body });
+      return jsonRes({
+        id: "c1",
+        object: "chat.completion",
+        created: 1,
+        model: MODEL,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "call_1",
+                  type: "function",
+                  function: {
+                    name: "recall_memories",
+                    arguments: '{"query":"上次定的技术栈"}',
+                  },
+                },
+              ],
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+        usage: USAGE,
+      });
+    };
+    const provider = createProvider({
+      provider: "deepseek",
+      apiKey: "sk-x",
+      baseUrl: "https://example.test",
+      fetch: fetch as unknown as typeof globalThis.fetch,
+    });
+
+    const res = await provider.chat({
+      model: MODEL,
+      messages: [{ role: "user", content: "hi" }],
+      tools: [TOOL],
+    });
+
+    expect(res.finishReason).toBe("tool-calls");
+    expect(res.toolCalls).toEqual([
+      { id: "call_1", name: "recall_memories", input: '{"query":"上次定的技术栈"}' },
+    ]);
+    expect(requests[0]!.body.tools?.[0]?.function?.name).toBe("recall_memories");
+  });
+
+  it("入站 assistant(tool_calls)+tool 结果 → 出站真 tool 消息带 tool_call_id（arguments 是序列化对象非二次包裹）", async () => {
+    const requests: { body: any }[] = [];
+    const fetch = async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      requests.push({ body });
+      return jsonRes({
+        id: "c1",
+        object: "chat.completion",
+        created: 1,
+        model: MODEL,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "好的" },
+            finish_reason: "stop",
+          },
+        ],
+        usage: USAGE,
+      });
+    };
+    const provider = createProvider({
+      provider: "deepseek",
+      apiKey: "sk-x",
+      baseUrl: "https://example.test",
+      fetch: fetch as unknown as typeof globalThis.fetch,
+    });
+
+    await provider.chat({
+      model: MODEL,
+      messages: [
+        { role: "user", content: "技术栈是什么" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_9",
+              type: "function",
+              function: { name: "recall_memories", arguments: '{"query":"技术栈"}' },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: "1. (preference) PostgreSQL",
+          tool_call_id: "call_9",
+          name: "recall_memories",
+        },
+        { role: "user", content: "继续" },
+      ],
+      tools: [TOOL],
+    });
+
+    const msgs = requests[0]!.body.messages;
+    const asst = msgs[1];
+    expect(asst.role).toBe("assistant");
+    expect(asst.tool_calls?.[0]?.id).toBe("call_9");
+    // arguments 出站为 JSON.stringify 后的字符串，可 parse 回对象（非字面再包一层引号）
+    expect(JSON.parse(asst.tool_calls?.[0]?.function?.arguments)).toEqual({
+      query: "技术栈",
+    });
+    const tool = msgs[2];
+    expect(tool.role).toBe("tool");
+    expect(tool.tool_call_id).toBe("call_9");
+    expect(tool.content).toContain("PostgreSQL");
+  });
+
+  it("流式：delta.tool_calls → finish chunk 带 toolCalls", async () => {
+    const requests: { body: any }[] = [];
+    const fetch = async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      requests.push({ body });
+      return sseRes([
+        {
+          id: "c1", object: "chat.completion.chunk", model: MODEL,
+          choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_2", type: "function", function: { name: "recall_memories", arguments: "" } }] }, finish_reason: null }],
+        },
+        {
+          id: "c1", object: "chat.completion.chunk", model: MODEL,
+          choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '{"query":"x"}' } }] }, finish_reason: null }],
+        },
+        {
+          id: "c1", object: "chat.completion.chunk", model: MODEL,
+          choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: USAGE,
+        },
+        "data: [DONE]\n\n",
+      ]);
+    };
+    const provider = createProvider({
+      provider: "deepseek",
+      apiKey: "sk-x",
+      baseUrl: "https://example.test",
+      fetch: fetch as unknown as typeof globalThis.fetch,
+    });
+
+    const chunks = [];
+    for await (const c of provider.stream({
+      model: MODEL,
+      messages: [{ role: "user", content: "hi" }],
+      tools: [TOOL],
+    })) {
+      chunks.push(c);
+    }
+
+    expect(requests[0]!.body.stream).toBe(true);
+    expect(requests[0]!.body.tools?.[0]?.function?.name).toBe("recall_memories");
+    const last = chunks.at(-1)!;
+    expect(last.finishReason).toBe("tool-calls");
+    expect(last.toolCalls).toEqual([
+      { id: "call_2", name: "recall_memories", input: expect.stringContaining("query") },
+    ]);
+  });
+});
+
 describe("SdkModelProvider.stream（流式）", () => {
   it("增量文本 + 末尾 finish chunk 带 usage", async () => {
     const requests: { url: string; body: any }[] = [];

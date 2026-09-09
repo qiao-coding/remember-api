@@ -8,8 +8,11 @@ import {
 import { createMemoryProvider } from "@remember/memory";
 import {
   createProvider,
+  sumUsage,
+  type ChatResult,
   type ChatUsage,
   type ModelProvider,
+  type ToolCall,
 } from "@remember/providers";
 import {
   SSE_DONE,
@@ -25,7 +28,22 @@ import {
   writeTurnMemories,
   type TurnMemoryInput,
 } from "./memory-write.js";
-import { maybeArchiveLongConversation } from "./memory-archive.js";
+import {
+  conversationIdOf,
+  maybeArchiveLongConversation,
+} from "./memory-archive.js";
+import { RECALL_MEMORY_TOOL, RECALL_TOOL_HINT, runRecall } from "./memory-tool.js";
+import {
+  loadRecentThread,
+  maybeUpdateRecentThread,
+} from "./recent-thread.js";
+import {
+  DEFAULT_MAX_TOOL_ROUNDS,
+  executeToolTurn,
+  isToolUnsupportedError,
+  runChatWithTools,
+  type ToolExecutor,
+} from "./tool-loop.js";
 
 export class ProfileNotFoundError extends Error {
   constructor(name: string) {
@@ -60,6 +78,8 @@ export interface PreparedChat {
   breakdown: ContextBreakdown;
   /** 用户级 + 请求级记忆开关；false 时短窗写入与长对话归档都跳过 */
   memoryEnabled: boolean;
+  /** 工具型自主 recall：memoryEnabled && env.RECALL_TOOLS !== false（工具由网关内 loop 执行） */
+  recallEnabled: boolean;
 }
 
 /**
@@ -146,6 +166,25 @@ export async function prepareChat(
   // developer → system、content 数组 → 纯文本（Codex/生态消息），后续统一用 msgs
   const msgs = normalizeMessages(req.messages);
 
+  // 工具型自主 recall 开关（recallEnabled 同时给 buildContext 注 [Memory] 提示 + run/stream 挂 tools）
+  const recallEnabled = memoryEnabled && env.RECALL_TOOLS !== false;
+
+  // recent 交接块：换会话时 seal 上一会话摘要进 prev 并注入 system [Recent Threads]。
+  // 只在新会话/够长才读行，且 DB 失败静默降级空——不因交接块拖垮 chat。
+  let recentThreadText: string | null = null;
+  if (memoryEnabled) {
+    try {
+      recentThreadText = await loadRecentThread({
+        userId,
+        profileId: profile.id,
+        currentConversationId: conversationIdOf(msgs),
+      });
+    } catch (err) {
+      console.warn("[chat] recent 交接块注入失败（降级无注入）:", err);
+      recentThreadText = null;
+    }
+  }
+
   const lastUser =
     [...msgs].reverse().find((m) => m.role === "user")?.content ?? "";
 
@@ -195,6 +234,8 @@ export async function prepareChat(
     profileSystemPrompt: profile.systemPrompt,
     preferences,
     retrievedMemories: retrieved,
+    recentThreadText,
+    toolUseHint: recallEnabled ? RECALL_TOOL_HINT : undefined,
     messages: msgs,
   });
 
@@ -217,10 +258,14 @@ export async function prepareChat(
     provider,
     finalMessages: built.messages,
     memoryTokens:
-      built.breakdown.preferenceTokens + built.breakdown.memoryTokens,
+      built.breakdown.preferenceTokens +
+      built.breakdown.memoryTokens +
+      built.breakdown.recentThreadTokens +
+      built.breakdown.toolHintTokens,
     skillTokens: built.breakdown.skillTokens,
     breakdown: built.breakdown,
     memoryEnabled,
+    recallEnabled,
   };
 }
 
@@ -244,16 +289,54 @@ function turnInput(
   };
 }
 
-/** 非流式 */
-export async function runChat(prepared: PreparedChat, req: ChatCompletionRequest) {
+/** recall_memories 工具的执行器：绑定当前用户/记忆桶，网关内跑，结果喂回模型 */
+function recallExecutor(prepared: PreparedChat): ToolExecutor {
+  return (name, input) =>
+    runRecall(
+      { userId: prepared.userId, projectId: prepared.projectId },
+      input as { query?: unknown; limit?: unknown },
+    );
+}
+
+/** 非流式：recall 开时走网关内 agentic loop；上游不支持 tools → 去工具降级重发一次（仅日志） */
+export async function runChat(
+  prepared: PreparedChat,
+  req: ChatCompletionRequest,
+): Promise<ChatResult> {
   const started = Date.now();
-  const result = await prepared.provider.chat({
+  const base = {
     model: prepared.baseModel,
-    messages: prepared.finalMessages,
     temperature: req.temperature ?? prepared.temperature ?? undefined,
     max_tokens: req.max_tokens ?? prepared.maxTokens ?? undefined,
     top_p: req.top_p ?? undefined,
-  });
+  };
+
+  const result = await (async (): Promise<ChatResult> => {
+    if (!prepared.recallEnabled) {
+      return prepared.provider.chat({ ...base, messages: prepared.finalMessages });
+    }
+    try {
+      const r = await runChatWithTools(
+        prepared.provider,
+        { ...base, messages: prepared.finalMessages },
+        { tools: [RECALL_MEMORY_TOOL], exec: recallExecutor(prepared) },
+      );
+      return {
+        id: "chatcmpl-" + crypto.randomUUID(),
+        model: prepared.baseModel,
+        content: r.content,
+        finishReason: r.finishReason,
+        usage: r.usage,
+      };
+    } catch (err) {
+      if (isToolUnsupportedError(err)) {
+        console.warn("[chat] 上游不支持 tools，降级为无工具重发");
+        return prepared.provider.chat({ ...base, messages: prepared.finalMessages });
+      }
+      throw err;
+    }
+  })();
+
   const latencyMs = Date.now() - started;
 
   await recordUsage({
@@ -273,11 +356,13 @@ export async function runChat(prepared: PreparedChat, req: ChatCompletionRequest
   const input = turnInput(prepared, req, result.content);
   void writeTurnMemories(input);
   void maybeArchiveLongConversation(input);
+  void maybeUpdateRecentThread(input);
 
   return result;
 }
 
-/** 流式：产出 OpenAI 兼容的 SSE 行 */
+/** 流式：产出 OpenAI 兼容的 SSE 行。recall 开时多轮——工具轮 text-delta 照推、
+ * finish 按住不 yield；模型不再要工具（或超轮）才补发该轮 finish 退出。 */
 export async function* streamChat(
   prepared: PreparedChat,
   req: ChatCompletionRequest,
@@ -287,39 +372,84 @@ export async function* streamChat(
   const created = Math.floor(Date.now() / 1000);
   let usage: ChatUsage | null = null;
   let finalContent = "";
+  const exec = prepared.recallEnabled ? recallExecutor(prepared) : null;
 
-  try {
-    for await (const chunk of prepared.provider.stream({
-      model: prepared.baseModel,
-      messages: prepared.finalMessages,
-      temperature: req.temperature ?? prepared.temperature ?? undefined,
-      max_tokens: req.max_tokens ?? prepared.maxTokens ?? undefined,
-      top_p: req.top_p ?? undefined,
-    })) {
-      if (chunk.usage) usage = chunk.usage;
-      if (chunk.delta.content) finalContent += chunk.delta.content;
-      yield sseChunk({
-        id,
-        object: "chat.completion.chunk",
-        created,
-        model: req.model,
-        choices: [
-          {
-            index: 0,
-            delta: { content: chunk.delta.content ?? undefined },
-            finish_reason: chunk.finishReason,
-          },
-        ],
-      });
-    }
-  } catch (err) {
-    yield sseChunk({
+  const sse = (
+    delta: { content?: string | null },
+    finish_reason: string | null,
+  ) =>
+    sseChunk({
       id,
       object: "chat.completion.chunk",
       created,
       model: req.model,
-      choices: [{ index: 0, delta: {}, finish_reason: "error" }],
+      choices: [{ index: 0, delta, finish_reason }],
     });
+
+  try {
+    let tools = prepared.recallEnabled ? [RECALL_MEMORY_TOOL] : undefined;
+    let retried = false;
+    let toolRounds = 0;
+    let messages = prepared.finalMessages;
+    const base = {
+      temperature: req.temperature ?? prepared.temperature ?? undefined,
+      max_tokens: req.max_tokens ?? prepared.maxTokens ?? undefined,
+      top_p: req.top_p ?? undefined,
+    };
+
+    while (true) {
+      const roundCalls: ToolCall[] = [];
+      let roundFinish: string | null = null;
+      let roundText = "";
+      let sentDelta = false; // 本圆是否已向客户端吐过字（决定 tools 降级可否安全整圆重跑）
+
+      try {
+        for await (const chunk of prepared.provider.stream({
+          model: prepared.baseModel,
+          ...base,
+          messages,
+          ...(tools?.length ? { tools } : {}),
+        })) {
+          if (chunk.usage) usage = sumUsage(usage, chunk.usage);
+          if (chunk.delta.content) {
+            finalContent += chunk.delta.content;
+            roundText += chunk.delta.content;
+            sentDelta = true;
+            yield sse({ content: chunk.delta.content }, null);
+          }
+          if (chunk.toolCalls?.length) roundCalls.push(...chunk.toolCalls);
+          if (chunk.finishReason) roundFinish = chunk.finishReason;
+        }
+      } catch (err) {
+        // 上游不支持 tools 且本圆一字未发 → 去工具整圆重跑（客户端无感知）
+        if (
+          tools?.length &&
+          !retried &&
+          !sentDelta &&
+          isToolUnsupportedError(err)
+        ) {
+          console.warn("[chat] 上游不支持 tools，流式降级为无工具重发");
+          retried = true;
+          tools = undefined;
+          continue;
+        }
+        throw err;
+      }
+
+      // 模型要工具且未超轮 → 执行并续轮（追加 assistant(tool_calls)+tool 结果）
+      if (roundCalls.length && toolRounds < DEFAULT_MAX_TOOL_ROUNDS && exec) {
+        messages = await executeToolTurn(messages, roundText, roundCalls, exec);
+        toolRounds++;
+        continue;
+      }
+
+      // 终止轮：补发 finish（text delta 已逐个发；超轮强制终止也照发原 reason）
+      yield sse({}, roundFinish ?? (roundCalls.length ? "tool-calls" : "stop"));
+      break;
+    }
+  } catch (err) {
+    console.warn("[chat] stream 错误:", err);
+    yield sse({}, "error");
   } finally {
     try {
       const latencyMs = Date.now() - started;
@@ -341,6 +471,7 @@ export async function* streamChat(
       const input = turnInput(prepared, req, finalContent);
       void writeTurnMemories(input);
       void maybeArchiveLongConversation(input);
+      void maybeUpdateRecentThread(input);
     } catch {
       // 收尾失败不影响流
     }

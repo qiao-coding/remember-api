@@ -76,4 +76,41 @@ describe("buildContext 两区布局", () => {
     // 首条若是 system 则无内容应省略：这里无 persona/client → 无 system
     expect(messages[0]!.role).toBe("assistant");
   });
+
+  it("recent 交接块 + recall 提示 → system 追加 [Recent Threads]/[Memory]，位于 [User Preferences] 之后", () => {
+    const { messages, breakdown } = buildContext({
+      clientSystem: "客户端自己的 system",
+      profileSystemPrompt: "你是个人助手",
+      preferences: [{ type: "preference", content: "用 PostgreSQL" }],
+      recentThreadText: "上次在重构登录页，做到表单校验，下一步接接口",
+      toolUseHint: "你有长期记忆：可调用 recall_memories(query) 按需检索。",
+      messages: hist(),
+    });
+    const sys = messages[0]!.content!;
+    const prefIdx = sys.indexOf("[User Preferences]");
+    const recentIdx = sys.indexOf("[Recent Threads]");
+    const memIdx = sys.indexOf("[Memory]");
+    expect(prefIdx).toBeGreaterThan(-1);
+    expect(recentIdx).toBeGreaterThan(prefIdx); // recent 紧跟偏好后
+    expect(memIdx).toBeGreaterThan(recentIdx); // recall 提示在最近
+    expect(sys).toContain("上次在重构登录页，做到表单校验");
+    expect(sys).toContain("recall_memories");
+    // 绝不含动态检索记忆（仍折叠尾部 user，不进稳定前缀）
+    expect(sys).not.toContain("[Relevant Memory]");
+    expect(breakdown.recentThreadTokens).toBeGreaterThan(0);
+    expect(breakdown.toolHintTokens).toBeGreaterThan(0);
+  });
+
+  it("recent/recall 缺省空 → system 逐字与旧布局一致，token 记 0", () => {
+    const { messages, breakdown } = buildContext({
+      clientSystem: "客户端自己的 system",
+      profileSystemPrompt: "你是个人助手",
+      preferences: [{ type: "preference", content: "用 PostgreSQL" }],
+      messages: hist(),
+    });
+    expect(messages[0]!.content).not.toContain("[Recent Threads]");
+    expect(messages[0]!.content).not.toContain("[Memory]");
+    expect(breakdown.recentThreadTokens).toBe(0);
+    expect(breakdown.toolHintTokens).toBe(0);
+  });
 });

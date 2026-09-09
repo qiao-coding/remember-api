@@ -31,6 +31,20 @@ const EnvSchema = z.object({
   ARCHIVE_MAX_ITEMS: z.coerce.number().optional().default(12),
   // 归档提炼用模型（默认网关同款）
   ARCHIVE_MODEL: z.string().optional().default("deepseek-chat"),
+  // ── recent 高密度会话摘要（profile 隔离，跨会话交接块）──
+  // minTokens：会话累计到这个值才首产摘要；growthTokens：距上次摘要增长到这值才滚动刷新；
+  // maxTranscriptTokens：喂提炼的转写上限（丢最旧）；maxInjectTokens：注入摘要 token 上限
+  RECENT_MIN_TOKENS: z.coerce.number().optional().default(1000),
+  RECENT_GROWTH_TOKENS: z.coerce.number().optional().default(800),
+  RECENT_MAX_TRANSCRIPT_TOKENS: z.coerce.number().optional().default(3000),
+  RECENT_MAX_INJECT_TOKENS: z.coerce.number().optional().default(300),
+  // ── 工具型自主 recall（网关内 agentic loop）──
+  // 关闭后回退旧被动检索注入；上游端点不支持 tools 时网关自动降级去 tools 重发，无需手动关。
+  // 不用 z.coerce.boolean：它把字符串 "false" 转 true，无法真正关闭 → preprocess 先译字符串
+  RECALL_TOOLS: z.preprocess(
+    (v) => (typeof v === "string" ? v === "true" : v),
+    z.boolean().default(true),
+  ),
   LOG_LEVEL: z
     .enum(["trace", "debug", "info", "warn", "error", "fatal"])
     .optional()
