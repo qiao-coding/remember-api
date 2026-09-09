@@ -1,5 +1,0 @@
-{
-  "title": "Docs",
-  "root": true,
-  "pages": ["quickstart", "concepts", "api", "faq"]
-}

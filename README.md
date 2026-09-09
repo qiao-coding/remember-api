@@ -4,15 +4,62 @@
 
 Stateful Personal AI API —— OpenAI 兼容的个人 AI 网关：一个 key 绑一个「个人 model（子 agent）」，model 间互相隔离、可调用共享（项目）记忆；让 DeepSeek Harness / 各类 OpenAI 兼容客户端共享同一份 Personal/Project Memory。单用户产品。
 
-## 架构：auth 模块与 api 网关解耦
+> ## ⚠️ 开发中：web 控制台 + 公共服务器
+>
+> **`apps/web`（Next.js 控制台 + Fumadocs 文档站）与 公共服务器（对外部署栈：docker compose + Dockerfile + runbook + mem0 记忆桥）正在开发，暂不进 GitHub 云端。**
+>
+> 本仓库（GitHub）当前只承载 **api 网关端** 与其支撑的 `packages/*` 源码 + 环境模板 —— 这是**有意为之**，规则写在 `.gitignore`（见下「仓库 git 范围」），本地开发/运行不受任何影响。正式对外部署就绪后，web 与部署栈会从同一规则里放回并随仓库发布。
 
-| 形态 | `SUPABASE_URL` | 暴露路由 | 说明 |
-|---|---|---|---|
-| **网关-only**（最小、可独立部署） | **留空** | `/v1`（OpenAI）+ `/health` | 不依赖任何登录/控制台/auth 云。DB + 模型 env 即可跑通，**先证明可用性走这条** |
-| **完整形态** | 填 `<ref>` | + `/api` 管理后台 | Supabase Auth JWT 验签；配合 `apps/web` 控制台管理 keys/profiles/memories |
+---
 
-- `/api` 管理路由**仅当 `SUPABASE_URL` 配置才挂载**（`apps/api/src/app.ts`）；`/v1` 网关永远可用。
-- 模型 key/base_url 走**环境变量**，api 网关部署不绑定 auth。
+## 仓库 git 范围（只推 api 端）
+
+云端 = GitHub 远程 `qiao-coding/remember-api`。当前策略：**web 控制台与部署/服务栈不推云端，只推 api 端**。
+
+| 状态 | 路径 | 说明 |
+|---|---|---|
+| ✅ 进云（api 端） | `apps/api/` | Fastify 网关（`/v1` + 可选 `/api`） |
+| ✅ 进云 | `packages/*` | `db/core/memory/providers/shared`，api 的依赖 |
+| ✅ 进云 | 根配置 | `package.json` / `pnpm-workspace.yaml` / `turbo.json` / `tsconfig.base.json` / `.env*.example` |
+| ✅ 进云 | `docs/`、`scripts/{e2e,pg-test,security-smoke}.sh/.mjs`、`ARCHIVE.md`、根交付 md | 文档与冒烟脚本 |
+| ⛔ 不进云（ignore + 已 untrack） | `apps/web/` | web 控制台 —— **开发中** |
+| ⛔ 不进云（ignore + 已 untrack） | `Dockerfile` `docker-compose.yml` `.dockerignore` | 部署/服务栈 —— **公共服务器开发中** |
+| ⛔ 不进云（ignore + 已 untrack） | `scripts/deploy/` `scripts/mem0-bridge/` | runbook + mem0 记忆桥 —— **开发中** |
+
+被摘除的目录**本地源码完整保留**，只是从 git 索引去掉：下次 `git push` 后，云端历史会删除这些路径（可逆、仅影响他人 clone；本地无感知）。
+
+### 恢复发布（web / 部署栈就绪时）
+
+```bash
+# 1) 放开 ignore：把 .gitignore 末尾「云端只推 api 端」块里对应行删掉
+# 2) 重新追踪并提交
+git add apps/web          # 或 git add Dockerfile docker-compose.yml .dockerignore scripts/deploy scripts/mem0-bridge
+git commit -m "chore: 发布 web / 部署栈"
+git push origin main
+```
+
+## Git 操作：日常只推 api 端
+
+ignore 规则会自动拦下 web/server，无需每次手动挑文件：
+
+```bash
+git add -A                 # 只会上车未忽略的改动（api + packages + 文档…）
+git status                 # 复查：不应出现 apps/web / Dockerfile / compose / scripts/deploy|mem0-bridge
+git commit -m "<msg>"
+git push origin main       # 推 GitHub 云端
+```
+
+校验云端范围（应为空）：
+
+```bash
+git ls-files | grep -E 'apps/web|docker-compose|scripts/(deploy|mem0-bridge)|^Dockerfile$' 
+```
+
+误把忽略文件 `git add -f` 进去后想撤回：
+
+```bash
+git restore --staged apps/web           # 移出暂存即可，不加 -f 加不回
+```
 
 ## 快速跑通（本地，证明可用）
 
@@ -31,7 +78,7 @@ psql -c "CREATE SCHEMA IF NOT EXISTS auth; \
 #    API_KEY_PEPPER=<openssl rand -hex 32>   ENCRYPTION_KEY=<openssl rand -hex 32>
 pnpm install
 
-# 3) 建表 + 种子（SEED_USER_ID：本地可用任意唯一 id；完整形态用 Supabase auth uid）
+# 3) 建表 + 种子（conversation_summaries 等新表由 db:migrate 一并建立）
 MIGRATE_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/remember_api pnpm db:migrate
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/remember_api \
   SEED_USER_ID=usr_local_admin \
@@ -56,33 +103,22 @@ curl -s -H "Authorization: Bearer rma_local_demo" -H "Content-Type: application/
 # 200，走真实 DeepSeek，usage 正常
 ```
 
-## Docker 正式部署（海外 VPS / Supabase 云）
+## 记忆机制（Claude 式 read 侧：recall 工具 + recent 会话交接）
 
-仓库根自带完整交付物：
+网关读侧把记忆从「被动检索背景」升级为「有注意力的双通道」：
 
-| 文件 | 作用 |
-|---|---|
-| `Dockerfile` | api 生产镜像（builder 全量构建 → `pnpm deploy` 薄 runtime） |
-| `docker-compose.yml` | `api:4000` + `mem0-bridge:8001`（内网）+ `db-init`（`--profile init` 一次性 migrate+seed） |
-| `.env.production.example` | 生产环境变量模板（→ `.env.production`，含密钥勿提交） |
-| `scripts/mem0-bridge/download-model.sh` | 预置 embedding 模型入卷（海外 `export HF_ENDPOINT=https://huggingface.co`） |
-| `scripts/deploy/runbook.md` | **逐机部署 runbook**（上传 → build → db-init → 起服务 → 冒烟 → 运维） |
+- **recent（开场交接）**：每会话滚动摘要存 `conversation_summaries`（PK `user+profile`，双槽 prev/active）。换新会话时上一会话的收尾状态 seal 冻结进 prev，注入下个会话 system 的 `[Recent Threads]` —— 让 AI「记得接着上次聊」，提醒类指令在此呈现才执行。
+- **history（按需检索）**：`recall_memories(query)` 声明为工具，由**网关内 agentic loop**（≤3 轮）执行——模型想查 → 网关自己搜 mem0/DB 回填工具结果继续，**客户端零感知**；上游不支持 tools 时自动去工具降级重发。
 
-两步走：
+关键 env（`apps/api/.env`，均有默认值，可不动）：
 
 ```bash
-cp .env.production.example .env.production   # 填 DATABASE_URL/DEEPSEEK_API_KEY/密钥；SUPABASE_URL 留空即网关-only
-docker compose --profile init run --rm db-init   # 首次建表 + 种子
-docker compose up -d                             # api + mem0-bridge
-curl -s -H "Authorization: Bearer $BOOTSTRAP_API_KEY" http://<HOST>:4000/v1/models
+RECALL_TOOLS=true                       # 工具型自主 recall 开关（"false" 关）
+RECENT_MIN_TOKENS=1000                  # 会话累计达此 token 才产首个 recent 摘要
+RECENT_GROWTH_TOKENS=800                # 距上次摘要再涨 ≥ 此值才刷新
+RECENT_MAX_TRANSCRIPT_TOKENS=3000       # 喂给摘要 LLM 的转写窗口上限
+RECENT_MAX_INJECT_TOKENS=300            # 注入 system 的 recent 文本预算
 ```
-
-完整逐机步骤（Supabase CA 导出、放行端口、mem0 预下载、运维速查）见 [`scripts/deploy/runbook.md`](scripts/deploy/runbook.md)。
-
-## 模型 key / base_url 走环境变量
-
-- **DeepSeek（网关默认）**：`DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL`。运行时按 profile 的 provider 解析，deepseek 无 DB 加密行时回退到 env（见 `apps/api/src/services/chat.ts`）。
-- **其它 provider / 完整形态**：web 控制台把 provider key/base_url 写入 `provider_configs`（AES-256-GCM，`ENCRYPTION_KEY`）。
 
 ## OpenAI 兼容客户端接入
 
@@ -95,21 +131,20 @@ api_key  = <绑定的 rma_ key>      # 一个 key 绑一个个人 model，隔离
 
 > Claude Code 走 Anthropic 协议，需在其前置一层 Anthropic→OpenAI 翻译（如 LiteLLM），不属本网关范畴。
 
-## 仓库结构
+## 模型 key / base_url 走环境变量
 
-```
-apps/api        Fastify :4000 —— /v1 网关 + /api 管理（可选挂载）
-apps/web        Next.js 15 控制台 + Fumadocs 文档站（:3000）
-packages/db     Drizzle schema / migrate / seed
-packages/core|memory|providers|shared
-scripts/deploy  runbook；scripts/mem0-bridge  记忆桥
-```
+- **DeepSeek（网关默认）**：`DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL`。运行时按 profile 的 provider 解析，deepseek 无 DB 加密行时回退到 env。
+- **其它 provider / 完整形态**：web 控制台把 provider key/base_url 写入 `provider_configs`（AES-256-GCM，`ENCRYPTION_KEY`）。web 发布前，完整形态依赖的云 auth 管理仍在开发。
 
 ## 本地开发
 
 ```bash
 pnpm install
-pnpm dev              # turbo：api :4000 + web :3000
+pnpm dev              # turbo：api :4000（+ 本地未入云的 web :3000，若你在本地跑它）
 pnpm typecheck
 pnpm --filter @remember/api test   # vitest 单测
 ```
+
+## 部署 / 公共服务器（开发中）
+
+正式对外部署 = **docker compose（api + mem0 记忆桥）+ Supabase 云 DB/auth**，仍在开发，部署产物**不随本仓库进 GitHub**（见「仓库 git 范围」）。本地机器的部署物料完好，逐机步骤在本地 `scripts/deploy/runbook.md`；待公共服务器就绪后，这部分会随仓库一并发布。

@@ -39,3 +39,18 @@ Thumbs.db
 # mem0 bridge python venv + local data
 .mem0-venv/
 .mem0/
+
+# ── 云端只推 api 端 ─────────────────────────────────────────
+# 以下仍在开发，暂不进 GitHub 云端（本地保留源码，开发/运行不受影响）。
+# 已追踪的也经 `git rm -r --cached` 从版本库摘除，下次 push 云端不再含。
+# 恢复发布：删掉对应行后用 `git add -f <path>`（见 README「仓库 git 范围」）。
+
+# web 控制台（Next.js 15 + Fumadocs 文档站）
+apps/web/
+
+# 部署/服务栈（docker compose 对外服务 + 构建 + runbook + mem0 记忆桥）—— 公共服务器开发中
+Dockerfile
+docker-compose.yml
+.dockerignore
+scripts/deploy/
+scripts/mem0-bridge/
