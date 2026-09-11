@@ -322,23 +322,23 @@ Model:    remember-dev
 
 ## 重要环境变量
 
-| 变量                                   | 说明                                                                                                 |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                       | API 运行时数据库连接                                                                                       |
-| `MIGRATE_DATABASE_URL`               | 数据库迁移连接，常用于本地或 CI                                                                                  |
-| `UPSTREAM_API_KEY`                   | **回退**上游 key：用户在控制台或 `npx remember-api model add` 录过 `provider_configs` 的厂商走库里那把加密 Key，这里可以留空 |
-| `UPSTREAM_BASE_URL`                  | 同上，只对回退路径生效。留空则按 Profile 的 `provider` 用各家默认端点；填了则走回退的 Profile 都走这一个地址（**不会**覆盖 provider_configs 里那行的 baseUrl） |
-| `SEED_PROVIDER` / `SEED_MODEL`       | `db:seed` 写入的样例 Profile 走哪家哪个模型，默认 `deepseek` / `deepseek-chat`                                    |
-| `ARCHIVE_PROVIDER` / `ARCHIVE_MODEL` | 归档与 recent 摘要的提炼模型，默认同网关主路径；换厂商需成对设置                                                               |
-| `SUPABASE_URL`                       | 留空时为 gateway-only 模式，仅挂 `/v1` 和 `/health`                                                          |
-| `SUPABASE_SERVICE_ROLE_KEY`          | 运行时未读取（`/api` 的 JWT 验签走 `jose`），可留空                                                                  |
-| `MEM0_BASE_URL`                      | 可选，配置后走 Mem0 bridge，否则使用 DB memory provider                                                        |
-| `MEM0_API_KEY`                       | Mem0 bridge 鉴权 key                                                                                 |
-| `API_KEY_PEPPER`                     | API Key hash pepper，生产环境必须修改                                                                       |
-| `ENCRYPTION_KEY`                     | Provider key 加密密钥，生产环境必须修改                                                                         |
-| `RECALL_TOOLS`                       | 是否启用网关内自主 recall，默认 `true`                                                                         |
-| `RECENT_MIN_TOKENS`                  | 会话累计到多少 token 后生成 recent 摘要                                                                        |
-| `RECENT_MAX_INJECT_TOKENS`           | recent 交接摘要注入预算                                                                                    |
+| 变量                                   | 说明                                                                                                             |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                       | API 运行时数据库连接                                                                                                   |
+| `MIGRATE_DATABASE_URL`               | 数据库迁移连接，常用于本地或 CI                                                                                              |
+| `UPSTREAM_API_KEY`                   | **回退**上游 key：用户在控制台或 `npx remember-api model add` 录过 `provider_configs` 的厂商走库里那把加密 Key，这里可以留空                  |
+| `UPSTREAM_BASE_URL`                  | 同上，只对回退路径生效。留空则按 Profile 的 `provider` 用各家默认端点；填了则走回退的 Profile 都走这一个地址（**不会**覆盖 provider\_configs 里那行的 baseUrl） |
+| `SEED_PROVIDER` / `SEED_MODEL`       | `db:seed` 写入的样例 Profile 走哪家哪个模型，默认 `deepseek` / `deepseek-chat`                                                |
+| `ARCHIVE_PROVIDER` / `ARCHIVE_MODEL` | 归档与 recent 摘要的提炼模型，默认同网关主路径；换厂商需成对设置                                                                           |
+| `SUPABASE_URL`                       | 留空时为 gateway-only 模式，仅挂 `/v1` 和 `/health`                                                                      |
+| `SUPABASE_SERVICE_ROLE_KEY`          | 运行时未读取（`/api` 的 JWT 验签走 `jose`），可留空                                                                            |
+| `MEM0_BASE_URL`                      | 可选，配置后走 Mem0 bridge，否则使用 DB memory provider                                                                    |
+| `MEM0_API_KEY`                       | Mem0 bridge 鉴权 key                                                                                             |
+| `API_KEY_PEPPER`                     | API Key hash pepper，生产环境必须修改                                                                                   |
+| `ENCRYPTION_KEY`                     | Provider key 加密密钥，生产环境必须修改                                                                                     |
+| `RECALL_TOOLS`                       | 是否启用网关内自主 recall，默认 `true`                                                                                     |
+| `RECENT_MIN_TOKENS`                  | 会话累计到多少 token 后生成 recent 摘要                                                                                    |
+| `RECENT_MAX_INJECT_TOKENS`           | recent 交接摘要注入预算                                                                                                |
 
 ## 本地开发命令
 
