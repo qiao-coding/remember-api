@@ -2,10 +2,6 @@
 
 本机起一个**带记忆的 OpenAI 兼容网关**，一条命令装完，不用克隆仓库。
 
-> ⚠️ **尚未发布到 npm。** `npm view remember-api` 目前是 404，所以下面的 `npx` 一律拉不到包——
-> 发布之前请走源码：`git clone` 仓库、`pnpm install`，再 `pnpm --filter remember-api build`
-> 打出 CLI，之后用 `node apps/cli/dist/index.js` 或 `npx --no-install remember-api` 跑同样的子命令。
-
 ```bash
 npx remember-api init   # 向导：建库 → 选厂商与模型 → 录 Key → 自检
 npx remember-api up     # 起网关，打印 Base URL / API Key / Model 三件套

@@ -64,7 +64,7 @@ pnpm --dir D:/coding/remember-api --filter @remember/web test
 - 每页 `title` 与 `description` 必填
 - 安装页按**服务跑在哪**分三种：`install/local`、`install/cloud-db`、`install/cloud-server`。「代码怎么拿」不单独成页，只在 `install/local` 页内分成两个 Tab
 - `install/local` 的两个 Tab 各不串味：npx 段不出现 `git clone` 和 `UPSTREAM_API_KEY`，源码段不出现 `npx remember-api init` / `npx remember-api up`
-- `start/get-started` 走 npx 那条路，整页不许出现 `git clone` 和 `UPSTREAM_API_KEY`；它与 `install/local` 是否挂「尚未发布到 npm」警告必须一致（口径不一致会红）
+- `start/get-started` 走 npx 那条路，整页不许出现 `git clone` 和 `UPSTREAM_API_KEY`；它与 `install/local` 的 npm 发布状态口径必须一致——包已于 2026-09-11 发布，两页都不挂「尚未发布」警告，若下架则两页一起加回（不一致会红）
 - Supabase 全流程的 15 个字符串（`6543`、`5432`、`SEED_USER_ID`、`UPSTREAM_API_KEY` 等）钉在 `install/cloud-db`
 - 全部页面禁止出现 `/dashboard`、`/login`、`进入控制台`、`live connection`
 - `<Steps>`/`<Step>` 已在 `mdx-components.tsx` 全局注册，直接用。`<Step>` 只收 children、没有 `title`，步骤标题在内部写 `###`
