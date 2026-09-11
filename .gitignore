@@ -50,6 +50,9 @@ Thumbs.db
 # 已追踪的也经 `git rm -r --cached` 从版本库摘除，下次 push 云端不再含。
 # 恢复发布：删掉对应行后用 `git add -f <path>`（见 README「仓库 git 范围」）。
 
+# 产品/开发规划文档（仓库根）—— 本地保留，不进云端
+remember-api：*.md
+
 # web 控制台（Next.js 15 + Fumadocs 文档站）
 apps/web/
 
