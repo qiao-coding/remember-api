@@ -6,7 +6,18 @@ export default defineConfig({
   target: "node22",
   platform: "node",
   clean: true,
-  sourcemap: true,
+  /**
+   * 发布产物不出 sourcemap：`.map` 只对本地调试有用，却占了 dist 体积的大头，
+   * 而 package.json 的 files 里那条排除 .map 的规则是打包时才滤——不如根本不生成。
+   * （注意：本注释内不要出现星号后接斜杠的 glob 写法，那会提前闭合块注释。）
+   */
+  sourcemap: false,
+  /**
+   * 压缩产物。`keepNames` 不能去掉：压缩会重命名函数/类，而 CLI 的错误分支
+   * 会把类名打给用户看（如 NeedsInteractiveError），名字被抹掉就没法读了。
+   */
+  minify: true,
+  keepNames: true,
   dts: false,
   /**
    * 必需，两段都不能删：
