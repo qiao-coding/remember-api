@@ -10,7 +10,7 @@
  * ⚠️ `@remember/api/*` 与本包依赖的 db 模块一律**动态 import**：`env.ts` 在模块加载时
  * parse `process.env`，静态 import 会让 `npx remember-api --help` 因为还没有 DATABASE_URL 就崩。
  */
-import { confirm, intro, log, outro, select, spinner, text } from "@clack/prompts";
+import { confirm, intro, log, outro, password, select, spinner, text } from "@clack/prompts";
 import { resolveBaseUrl } from "@remember/providers";
 import { generateApiKey } from "@remember/shared";
 import { getProvider } from "./catalog.js";
@@ -29,11 +29,26 @@ import {
   type CliConfig,
   configPath,
   emptyConfig,
+  generateSecret,
   readConfig,
   writeConfig,
 } from "./config.js";
 import { NeedsInteractiveError, isInteractive, required, unwrap } from "./prompt.js";
-import { checkSupabaseConnectionString, listSupabaseProjects } from "./supabase.js";
+import {
+  type SupaOrg,
+  type SupaProject,
+  checkSupabaseConnectionString,
+  createProject,
+  getServiceRoleKey,
+  isPaused,
+  listOrganizations,
+  listSupabaseProjects,
+  loginSupabase,
+  projectUrl,
+  waitForProject,
+} from "./supabase.js";
+import { derivePoolerConnection } from "./supabase-connect.js";
+import { ensureAuthUser } from "./supabase-auth.js";
 import { type ChosenTarget, type TargetHint, chooseKey, chooseTarget } from "./selection.js";
 import { applyEnv, reportSmoke, runSmoke } from "./smoke.js";
 import { printConnect } from "./connect.js";
@@ -74,6 +89,12 @@ export async function runInit(opts: InitOptions = {}): Promise<void> {
   }
 
   const config = await initialConfig(unattended);
+
+  // `--host` 以前解析了却没人读：`config.server.host` 一直是默认的 127.0.0.1，
+  // 用户以为「我指定了对外地址」而实际没生效 —— 接上它，让 `up` 真的绑到那个地址。
+  // （注意 `init --port` 是 docker 起库的端口，与这里不是一回事。）
+  const host = opts.host?.trim();
+  if (host) config.server = { ...config.server, host };
 
   await setupDatabase(config, opts);
   await writeConfig(config); // 建库成功先落盘：后面的选择是「可以重来的」，库不是
@@ -141,13 +162,25 @@ async function initialConfig(unattended: boolean): Promise<CliConfig> {
   return { ...emptyConfig(), database: existing.database, server: existing.server };
 }
 
+/**
+ * 数据库这段的四种走向。
+ *
+ * 分开命名而不是复用同一个 `"url"`：「沿用当前连接串」与「手填一条新串」在提示语、
+ * 是否追问上是两件事 —— 混用一个值正是这次要修的 bug（选了「沿用」却被重新问一遍）。
+ */
+type DbMode = "docker" | "reuse" | "cloud" | "manual";
+
+const CLOUD_HINT = "弹终端登录 → 选/建项目 → 连接串自动推出来";
+
 async function setupDatabase(config: CliConfig, opts: InitOptions): Promise<void> {
   const docker = await dockerVersion();
   const hasUrl = Boolean(config.database.url);
 
-  let mode: "docker" | "url";
+  let mode: DbMode;
+  let cloud: CloudChoice | null = null;
+
   if (opts.url) {
-    mode = "url";
+    mode = "manual"; // 串已经给了，下面不再追问
   } else if (opts.port) {
     if (!docker) {
       throw new Error(
@@ -161,37 +194,45 @@ async function setupDatabase(config: CliConfig, opts: InitOptions): Promise<void
       await select({
         message: "数据库",
         options: [
-          { value: "url", label: "沿用当前连接串", hint: config.database.url },
+          { value: "reuse", label: "沿用当前连接串", hint: config.database.url },
           ...(docker ? [{ value: "docker" as const, label: "改用 Docker 新建一个" }] : []),
+          { value: "cloud", label: "接一个 Supabase 项目", hint: CLOUD_HINT },
+          { value: "manual", label: "手填一条新连接串" },
         ],
       }),
-    ) as "docker" | "url";
+    ) as DbMode;
   } else if (docker) {
     mode = unwrap(
       await select({
         message: `数据库（检测到 ${docker}）`,
         options: [
           { value: "docker", label: `Docker 起一个 ${DEFAULT_DB_PLAN.image}（推荐）` },
-          { value: "url", label: "我有现成的连接串", hint: "本机或远程 Postgres 都行" },
+          { value: "cloud", label: "接一个 Supabase 项目", hint: CLOUD_HINT },
+          { value: "manual", label: "我有现成的连接串", hint: "本机或远程 Postgres 都行" },
         ],
       }),
-    ) as "docker" | "url";
-    log.info("容器已存在会直接复用，不会重建");
+    ) as DbMode;
+    if (mode === "docker") log.info("容器已存在会直接复用，不会重建");
   } else {
     if (await dockerCliInstalled()) {
-      log.warn("装了 docker 但 daemon 没起来（Docker Desktop 没启动？）：改用手填连接串");
+      log.warn("装了 docker 但 daemon 没起来（Docker Desktop 没启动？）");
     } else {
-      log.warn("没找到 docker：改用手填连接串");
+      log.warn("没找到 docker");
     }
-    mode = "url";
+    // 以前这条路直接跳到手填，于是「接一个 Supabase 项目」在没装 docker 的机器上
+    // **根本不可见** —— 而没装 docker 的人恰恰最需要它。
+    mode = unwrap(
+      await select({
+        message: "数据库",
+        options: [
+          { value: "cloud", label: "接一个 Supabase 项目", hint: CLOUD_HINT },
+          { value: "manual", label: "我有现成的连接串", hint: "本机或远程 Postgres 都行" },
+        ],
+      }),
+    ) as DbMode;
   }
 
-  if (mode === "url") {
-    // 云端分两条：Supabase 项目 / 自己贴串。`--url` 给了就都不问。
-    const url = opts.url?.trim() ?? (await askCloudUrl());
-    const migrateUrl = await pickMigrateUrl(url, opts);
-    config.database = { url, migrateUrl, docker: null };
-  } else {
+  if (mode === "docker") {
     // 容器名固定默认值，避免多问一句；同名容器存在时直接复用（见 ensureContainer）
     const plan = { ...DEFAULT_DB_PLAN };
     plan.port = opts.port ?? (await askDockerPort());
@@ -205,6 +246,22 @@ async function setupDatabase(config: CliConfig, opts: InitOptions): Promise<void
         managed: true,
       },
     };
+  } else if (mode === "reuse") {
+    // hasUrl 保证这里非空。以前这一步是 `opts.url ?? askCloudUrl()` —— opts.url 在交互
+    // 模式下永远是 undefined，于是「沿用」变成了「重新问一遍」并丢掉原串。
+    const url = config.database.url;
+    config.database = { url, migrateUrl: await pickMigrateUrl(url, opts), docker: null };
+  } else if (mode === "cloud") {
+    cloud = await chooseCloudDatabase();
+    if (cloud) {
+      config.database = { url: cloud.url, migrateUrl: cloud.migrateUrl, docker: null };
+    } else {
+      const url = await askConnectionString(); // CLI 那条路走不通 → 退回手填，不卡人
+      config.database = { url, migrateUrl: await pickMigrateUrl(url, opts), docker: null };
+    }
+  } else {
+    const url = opts.url?.trim() ?? (await askConnectionString());
+    config.database = { url, migrateUrl: await pickMigrateUrl(url, opts), docker: null };
   }
 
   const url = config.database.url;
@@ -225,6 +282,10 @@ async function setupDatabase(config: CliConfig, opts: InitOptions): Promise<void
     spin.error("数据库准备失败");
     throw err;
   }
+
+  // 建 auth 用户必须在库就绪之后：先确认库真的能用，再去动云端账号，
+  // 不然会出现「Supabase 上多了一个用户，本地却什么都没装上」。
+  if (cloud) await ensureCloudAuthUser(config, cloud);
 }
 
 /**
@@ -275,76 +336,312 @@ async function askConnectionString(): Promise<string> {
   ).trim();
 }
 
+// ─────────────────────── Supabase 云端那条路 ───────────────────────
+
+interface CloudChoice {
+  /** 运行时串（事务池 6543） */
+  url: string;
+  /** 迁移串（session 池 5432） */
+  migrateUrl: string;
+  ref: string;
+  /** 要建的 auth 用户的邮箱 */
+  email: string;
+  /** 那个 auth 用户的密码 */
+  userPassword: string;
+}
+
+/** 建项目时的区域短名单 —— 不甩 CLI 那 18 个枚举，只留常用的几个 */
+const REGION_CHOICES = [
+  { value: "ap-northeast-1", label: "东京 ap-northeast-1", hint: "亚太，国内延迟最低" },
+  { value: "ap-southeast-1", label: "新加坡 ap-southeast-1" },
+  { value: "us-east-1", label: "美东 us-east-1" },
+  { value: "us-west-1", label: "美西 us-west-1" },
+  { value: "eu-central-1", label: "法兰克福 eu-central-1" },
+];
+
+const DEFAULT_AUTH_EMAIL = "admin@remember.local";
+
 /**
- * 「连接串从哪来？」——云端两条路。
+ * 云端这条路：弹终端登录 → 选/建项目 → 试出池化主机 → 一对连接串。
  *
- * 无人值守不走这里（`--url` 已经给了），所以下面全是真人向导的交互。
+ * 返回 null = 「这次用不上」（没登录、CLI 报错、试连全败、用户自己选了手填），
+ * 由调用方退回手填。**全程不抛错**是刻意的：它是加分的辅助路，不该把人卡死在这儿。
  */
-async function askCloudUrl(): Promise<string> {
-  const source = unwrap(
+async function chooseCloudDatabase(): Promise<CloudChoice | null> {
+  const login = await loginSupabase({ note: (m) => log.info(m) });
+  if (!login.ok) {
+    log.warn(login.reason);
+    // 这句话得**单独给**：上面那句说的是「为什么 CLI 用不了」，这句说的是「那我现在怎么办」。
+    // 要把「不需要 CLI、也不需要 Supabase 账号」点明 —— 否则用户会以为自己卡死了。
+    log.info("不用 CLI 也能继续：下面选「手填连接串」，去 Dashboard → Connect 复制那条池化串贴上就行");
+    return null;
+  }
+
+  const orgs = await listOrganizations();
+  if (!orgs.ok) {
+    log.warn(orgs.reason);
+    log.info("不用 CLI 也能继续：下面选「手填连接串」，去 Dashboard → Connect 复制那条池化串贴上就行");
+    return null;
+  }
+  const listed = await listSupabaseProjects();
+  if (!listed.ok) log.warn(listed.reason); // 列不出来不影响新建
+  const existing = listed.ok ? listed.projects : [];
+
+  const how = unwrap(
     await select({
-      message: "连接串从哪来？",
+      message: "Supabase 项目",
       options: [
-        {
-          value: "supabase",
-          label: "Supabase 项目",
-          hint: "用 supabase CLI 挑项目，再贴一条池化串（没登录会让你先登录）",
-        },
-        { value: "custom", label: "自己贴连接串", hint: "自建 / 其他云厂商 / 本机都行" },
+        ...(existing.length
+          ? [{ value: "existing", label: "接入已有项目", hint: `${existing.length} 个` }]
+          : []),
+        ...(orgs.orgs.length
+          ? [{ value: "new", label: "新建一个项目", hint: "会真的在 Supabase 上创建（可能计费）" }]
+          : []),
+        { value: "manual", label: "改用手填连接串" },
       ],
     }),
   ) as string;
+  if (how === "manual") return null;
 
-  return source === "supabase" ? askSupabaseUrl() : askConnectionString();
+  // 两条路最后都落到同样的三个值上：ref + 区域 + 数据库密码
+  let ref: string;
+  let region: string;
+  let dbPassword: string;
+  let project: SupaProject;
+
+  if (how === "existing") {
+    const picked = await pickExistingProject(existing);
+    if (!picked) return null;
+    project = picked;
+    ref = picked.ref;
+    region = picked.region;
+    // 暂停的项目池化主机连不上，而那个报错和「密码错」长得一样。清单里现成有 status，
+    // 现在说一句，比让人试连全败之后去猜密码强。
+    if (isPaused(picked.status)) {
+      log.warn(
+        `${picked.name}（${picked.ref}）现在是 ${picked.status} —— 被暂停的项目连不上。` +
+          `先去 Dashboard 点 Restore/Resume，再回来继续。`,
+      );
+    }
+    dbPassword = await askDbPassword(picked);
+  } else {
+    const made = await createNewProject(orgs.orgs);
+    if (!made) return null;
+    ref = made.ref;
+    region = made.region;
+    dbPassword = made.dbPassword;
+    project = { ref, name: made.name, region, status: "" };
+  }
+
+  if (!region) {
+    log.warn(`项目 ${ref} 没报出区域，推不出池化主机名 —— 改用手填`);
+    return null;
+  }
+
+  const derived = await derivePoolerConnection({ ref, region, password: dbPassword });
+  if (!derived.ok) {
+    log.warn(
+      isPaused(project.status)
+        ? `两个候选池化主机都连不上，而 ${ref} 正被暂停（${project.status}）—— 多半就是这个原因：`
+        : "两个候选池化主机都连不上（密码不对？或者项目还在 provisioning？）：",
+    );
+    for (const line of derived.tried) log.warn(`  ${line}`);
+    const pasted = await askSupabasePaste(project);
+    if (!pasted) return null;
+    return {
+      url: pasted,
+      migrateUrl: resolveMigrateUrl(pasted) ?? pasted,
+      ref,
+      email: await askAuthEmail(),
+      userPassword: generateSecret(),
+    };
+  }
+
+  log.success(`池化主机试出来了：${derived.conn.host}`);
+  return {
+    url: derived.conn.url,
+    migrateUrl: derived.conn.migrateUrl,
+    ref,
+    email: await askAuthEmail(),
+    userPassword: generateSecret(),
+  };
 }
 
 /**
- * Supabase 路：CLI 认项目 → 用户贴一次池化串 → 按 ref/区域校验。
+ * 挑一个已有项目。区域也在这里拿到 —— 它就是池化主机名的一部分。
  *
- * CLI 用不上（没装 / 没登录 / 网络不通）就**退回手填**，不把人卡在这一步。
- * 另外 CLI 给不出池化串——里面差一个只有 Dashboard 有的数据库密码，
- * 而池化主机名的集群前缀（aws-0 / aws-1）推不出来，所以那一段必须用户贴。
+ * 名字**不可靠**：真机上见到的账号三个项目全叫「xier123456's Project」，全靠 ref 区分。
+ * 所以 hint 里 ref 必须在，暂停状态也得在 —— 那三个里两个是 INACTIVE，选错了会连不上，
+ * 而报错与「密码错」长得一样。
  */
-async function askSupabaseUrl(): Promise<string> {
-  const list = await listSupabaseProjects();
-  if (!list.ok) {
-    log.warn(list.reason);
-    log.info("也没关系：去 Dashboard → Connect 复制池化串，直接贴进来");
-    return askConnectionString();
-  }
-  if (!list.projects.length) {
-    log.warn("这个账号名下还没有 Supabase 项目");
-    return askConnectionString();
-  }
-
+async function pickExistingProject(projects: SupaProject[]): Promise<SupaProject | null> {
   const ref = unwrap(
     await select({
       message: "选一个项目",
-      options: list.projects.map((p) => ({
+      options: projects.map((p) => ({
         value: p.ref,
         label: p.name,
-        hint: `${p.ref}${p.region ? ` · ${p.region}` : ""}`,
+        hint: [p.ref, p.region, isPaused(p.status) ? `${p.status}（连不上，需先恢复）` : ""]
+          .filter(Boolean)
+          .join(" · "),
       })),
     }),
   ) as string;
-  const chosen = list.projects.find((p) => p.ref === ref);
-  if (!chosen) return askConnectionString();
+  return projects.find((p) => p.ref === ref) ?? null;
+}
 
+/**
+ * 项目的数据库密码 —— 这条路**躲不掉**的那个输入。
+ *
+ * 它只存在 Supabase 侧：Dashboard 要它、`supabase link -p` 要它、直连当然也要。
+ * 但比起让用户从控制台复制**一整条池化串**，敲一个密码已经省掉了最容易抄错的三段
+ * （池化主机名、`postgres.<ref>` 用户名、端口）—— 那三段我们推。
+ * 建新项目时连这一句都不用问：密码是我们生成的。
+ */
+async function askDbPassword(project: SupaProject): Promise<string> {
+  return unwrap(
+    await password({
+      message: `${project.name} 的数据库密码（控制台 Project Settings → Database）`,
+      validate: required("数据库密码"),
+    }),
+  ).trim();
+}
+
+/** 试连全败时的手贴兜底：至少按 ref / 区域 / 端口校验形状，不把串台与端口错放过去 */
+async function askSupabasePaste(project: SupaProject): Promise<string | null> {
   const url = unwrap(
     await text({
-      message: `贴 ${chosen.name} 的池化连接串（Dashboard → Connect → Transaction pooler）`,
-      placeholder: `postgres://postgres.${chosen.ref}:<password>@aws-0-${
-        chosen.region || "<region>"
+      message: `贴 ${project.name} 的池化连接串（Dashboard → Connect → Transaction pooler）`,
+      placeholder: `postgres://postgres.${project.ref}:<password>@aws-0-${
+        project.region || "<region>"
       }.pooler.supabase.com:6543/postgres?pgbouncer=true&sslmode=require`,
       validate: (value) => {
-        const problems = checkSupabaseConnectionString(value ?? "", chosen);
+        const problems = checkSupabaseConnectionString(value ?? "", project);
         return problems.length ? problems.join("；") : undefined;
       },
     }),
   ).trim();
+  return url || null;
+}
 
-  log.info(`配套的 SUPABASE_URL=https://${chosen.ref}.supabase.co（写进 apps/api/.env 才会挂 /api）`);
-  return url;
+async function askAuthEmail(): Promise<string> {
+  const typed = unwrap(
+    await text({
+      message: "给这个项目建一个 auth 用户，用哪个邮箱？",
+      defaultValue: DEFAULT_AUTH_EMAIL,
+      placeholder: DEFAULT_AUTH_EMAIL,
+      validate: (value) => ((value ?? "").trim() || DEFAULT_AUTH_EMAIL).includes("@") ? undefined : "要是个邮箱",
+    }),
+  ).trim();
+  return typed || DEFAULT_AUTH_EMAIL;
+}
+
+/**
+ * 新建项目。
+ *
+ * 建项目是**对外、可能计费**的动作，所以：先问清三个值 → 把**确切命令**摆出来 →
+ * 要一次显式确认，绝不静默执行。数据库密码由我们生成（hex，URL 安全）——
+ * 这既是「连接串可推导」的前提，也让它能安全地过 shell。
+ */
+async function createNewProject(
+  orgs: SupaOrg[],
+): Promise<{ ref: string; name: string; region: string; dbPassword: string } | null> {
+  const orgId =
+    orgs.length === 1
+      ? (orgs[0]?.id ?? "")
+      : (unwrap(
+          await select({
+            message: "建在哪个组织下",
+            options: orgs.map((o) => ({ value: o.id, label: o.name, hint: o.id })),
+          }),
+        ) as string);
+  const org = orgs.find((o) => o.id === orgId);
+  if (!org) return null;
+
+  const name = unwrap(
+    await text({
+      message: "项目名",
+      defaultValue: `remember-api-${Math.floor(Math.random() * 9000 + 1000)}`,
+      validate: (value) =>
+        /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/.test((value ?? "").trim())
+          ? undefined
+          : "只能是字母、数字与短横线",
+    }),
+  ).trim();
+  const region = unwrap(await select({ message: "区域", options: REGION_CHOICES })) as string;
+  const dbPassword = generateSecret();
+
+  const ok = unwrap(
+    await confirm({
+      message:
+        `要现在创建吗？\n` +
+        `npx supabase projects create ${name} --org-id ${org.id} --region ${region} --db-password <生成的 64 位 hex>\n` +
+        `（会真的在 Supabase 上建一个项目，可能计费）`,
+      initialValue: false,
+    }),
+  );
+  if (!ok) return null;
+
+  const spin = spinner();
+  spin.start(`正在创建 ${name}…`);
+  const made = await createProject({ name, orgId: org.id, dbPassword, region });
+  if (!made.ok) {
+    spin.error("建项目失败");
+    throw new Error(made.reason);
+  }
+  // 建完不能马上连：provisioning 是分钟级的。等它出现在清单里（顺便拿到官方区域名）
+  const waited = await waitForProject(made.ref ? { ref: made.ref } : { name }, {
+    note: (m) => spin.message(m),
+  });
+  if (!waited.ok) {
+    spin.error("等新项目就绪超时");
+    throw new Error(waited.reason);
+  }
+  spin.stop(`项目 ${name} 已创建（${waited.project.ref}）`);
+  log.info(`数据库密码（只显示这一次，请自己存好）：${dbPassword}`);
+  return {
+    ref: waited.project.ref,
+    name,
+    region: waited.project.region || region,
+    dbPassword,
+  };
+}
+
+/**
+ * 在真 Supabase 项目里建 auth 用户，把 uid 对齐给 seed。
+ *
+ * 失败**不阻断**安装：网关跑的是 gateway-only（不校验 Supabase 身份），拿不到真 uid 时
+ * seed 用本地假 id 照样通。代价只是那个用户在走 RLS 的路径下不可见 —— 值得说清楚，
+ * 但不值得让整台装不上。
+ */
+async function ensureCloudAuthUser(config: CliConfig, cloud: CloudChoice): Promise<void> {
+  const spin = spinner();
+  spin.start("在 Supabase Auth 里建用户…");
+
+  const key = await getServiceRoleKey(cloud.ref);
+  if (!key.ok) {
+    spin.stop("跳过 Auth 用户");
+    log.warn(`${key.reason}\nseed 会用本地假 id：网关不受影响，但这个用户在走 RLS 的路径下不可见`);
+    return;
+  }
+
+  const made = await ensureAuthUser({
+    projectUrl: projectUrl(cloud.ref),
+    serviceRoleKey: key.key,
+    email: cloud.email,
+    password: cloud.userPassword,
+  });
+  if (!made.ok) {
+    spin.stop("跳过 Auth 用户");
+    log.warn(`${made.reason}\nseed 会用本地假 id：网关不受影响，但这个用户在走 RLS 的路径下不可见`);
+    return;
+  }
+
+  config.user = { id: made.id, email: cloud.email, name: config.user.name };
+  spin.stop(
+    `Auth 用户 ${cloud.email} ${made.created ? "已创建" : "已存在，复用"}` +
+      `（uid ${made.id}${made.created ? ` · 密码 ${cloud.userPassword}` : ""}）`,
+  );
 }
 
 async function askDockerPort(): Promise<number> {
