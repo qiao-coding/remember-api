@@ -237,7 +237,6 @@ npx remember-api up     # 起网关，打印 Base URL / API Key / Model 三件�
 ```
 
 录一次 Key 之后，换模型只切一行且不用重启网关：`npx remember-api model use deepseek/deepseek-v4-pro`。
-> ⚠️ `remember-api` **尚未发布到 npm**，`npx` 现在还拉不到；发布前请走下面的源码路径。
 
 下面的手动路径以本地 PostgreSQL 为例。
 
