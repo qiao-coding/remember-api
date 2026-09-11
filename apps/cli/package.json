@@ -1,0 +1,56 @@
+{
+  "name": "remember-api",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "description": "npx remember-api —— 在本机起一个带记忆的 OpenAI 兼容网关（不用克隆仓库）",
+  "keywords": [
+    "openai",
+    "gateway",
+    "memory",
+    "llm",
+    "cli",
+    "self-hosted"
+  ],
+  "homepage": "https://github.com/qiao-coding/remember-api",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qiao-coding/remember-api.git",
+    "directory": "apps/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/qiao-coding/remember-api/issues"
+  },
+  "type": "module",
+  "bin": {
+    "remember-api": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "drizzle",
+    "certs"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup && node scripts/copy-assets.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/models": "^0.0.64",
+    "@remember/api": "workspace:*",
+    "@remember/db": "workspace:*",
+    "@remember/providers": "workspace:*",
+    "@remember/shared": "workspace:*",
+    "@types/node": "^22.9.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^5.0.0"
+  }
+}

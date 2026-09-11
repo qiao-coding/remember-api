@@ -9,3 +9,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role";
 process.env.API_KEY_PEPPER = "test-pepper";
 process.env.ENCRYPTION_KEY = "test-encryption-key";
 process.env.LOG_LEVEL = "error";
+// 显式钉住上游凭据为空：env.ts 的 process.loadEnvFile() 会读 <cwd>/.env，开发机上的
+// UPSTREAM_API_KEY 会悄悄决定测试走「env 兜底」还是「无凭据」分支。测试必须与开发机环境无关。
+process.env.UPSTREAM_API_KEY = "";
+process.env.UPSTREAM_BASE_URL = "";

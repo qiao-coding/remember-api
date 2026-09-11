@@ -23,14 +23,19 @@ export const MEMORY_TYPES: readonly MemoryType[] = [
 /** 记忆层级（对应文档 L0~L3），用于标记记忆的来源层级 */
 export type MemoryTier = "preference" | "project-summary" | "retrieved" | "raw";
 
-/** 底层模型 Provider */
-export type ProviderId =
-  | "deepseek"
-  | "openai"
-  | "anthropic"
-  | "openrouter"
-  | "custom";
+/**
+ * 底层模型 Provider 标识。
+ *
+ * 刻意**不是**封闭联合：真实的厂商登记表是 `@opencode-ai/models` 的 models.dev 快照
+ * （213 家，其中 173 家能走现有 OpenAI 兼容桥），而 `profiles.provider` 与
+ * `provider_configs.provider` 在库里本来就是自由 `text`。把类型收紧只会挡住合法厂商
+ * —— `tool-loop.test.ts` 早就得写 `"fake" as ProviderId` 才绕得过去。
+ *
+ * 拼错的 provider 由 `resolveBaseUrl` 在调用时抛出可读错误（不是在这里拦住）。
+ */
+export type ProviderId = string;
 
+/** 精选短名单（**不是全集**；seed 默认值、控制台下拉、文档示例用它） */
 export const PROVIDER_IDS: readonly ProviderId[] = [
   "deepseek",
   "openai",

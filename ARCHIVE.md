@@ -46,4 +46,6 @@
 
 ## 环境备注（供日后参考）
 - git 仓库 **0 commits**（从无提交历史）。
-- Supabase（kervulaespadqdxzgflk）DB 直连/pooler 在当前网络**不可达**（仅 443 REST 通）；本地 PG 17（postgres:postgres@127.0.0.1）可用作实验库，本地迁移需先建 `auth.uid()` stub。
+- Supabase（kervulaespadqdxzgflk）项目在 **us-east-1**，入口是 `aws-0-us-east-1.pooler.supabase.com`（5432 = session 池供 DDL，6543 = 事务池供运行时）。**直连域名 `db.<ref>.supabase.co` 不可用**：只解析出 IPv6、没有 A 记录，纯 IPv4 网络里 DNS 直接失败，迁移也走池化地址、只换端口。（2026-09-11 复测更正；此前记的「直连/pooler 全不可达」不准 —— 池化地址本身是通的。）
+  仍有一处网络限制：本机到池化 **端口的出口被挡** —— TCP 能建连，TLS 握手收不到一个字节，跨区域 / 跨 IP / 容器内表现一致。所以云端 E2E 在这台机器上跑不完，换网络（境外主机或代理）即可。
+- 本地 PG 17（postgres:postgres@127.0.0.1）可用作实验库，本地迁移需先建 `auth.uid()` stub。

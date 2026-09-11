@@ -1,8 +1,11 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 /**
- * 用户 Provider Key 的对称加密 —— AES-256-GCM。
+ * Provider Key 的对称加密 —— AES-256-GCM。
  * 密钥由 ENCRYPTION_KEY 派生，密文包含 iv + authTag。
+ *
+ * 放在 shared 而不是 api 里：网关（写/读 provider_configs）与 CLI（录入 Key）必须是同一套
+ * 实现，否则 CLI 写的密文网关解不开。
  */
 function deriveKey(secret: string): Buffer {
   return createHash("sha256").update(secret).digest();

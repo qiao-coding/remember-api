@@ -1,6 +1,6 @@
 /**
  * manager 路由 zod schema 校验测试。
- * 覆盖：必填、越界、provider enum 锁、memoryBudget clamp、key 掩码语义所需输入。
+ * 覆盖：必填、越界、provider 自由文本、memoryBudget clamp、key 掩码语义所需输入。
  * schema 从路由文件导出（每新增字段/收紧约束都先改这里）。
  */
 import { describe, expect, it, vi } from "vitest";
@@ -13,6 +13,7 @@ vi.mock("@remember/db", () => ({
   profiles: {},
   projects: {},
   providerConfigs: {},
+  upsertProviderConfig: vi.fn(),
 }));
 vi.mock("@remember/memory", () => ({ createMemoryProvider: vi.fn() }));
 
@@ -49,10 +50,13 @@ describe("ProfileSchema", () => {
     expect(ProfileSchema.parse(validProfile).projectId).toBe("proj_a");
   });
 
-  it("provider 仅接受 shared 的 PROVIDER_IDS（不再锁 deepseek）", () => {
+  // provider 是自由文本：登记表是 models.dev 目录（200+ 家），PROVIDER_IDS 只是精选短名单。
+  // 这里只挡空串；拼错的 id 由 resolveBaseUrl 在请求期抛出可读错误。
+  it("provider 接受任意非空字符串（精选短名单 + 目录 id 均可）", () => {
     expect(ProfileSchema.parse({ ...validProfile, provider: "deepseek" }).provider).toBe("deepseek");
-    expect(ProfileSchema.parse({ ...validProfile, provider: "anthropic" }).provider).toBe("anthropic");
-    expect(() => ProfileSchema.parse({ ...validProfile, provider: "claude" })).toThrow();
+    expect(ProfileSchema.parse({ ...validProfile, provider: "moonshotai" }).provider).toBe("moonshotai");
+    expect(() => ProfileSchema.parse({ ...validProfile, provider: "" })).toThrow();
+    expect(() => ProfileSchema.parse({ ...validProfile, provider: undefined })).toThrow();
   });
 
   it("memoryBudget 夹在 [100, 100_000] 且为整数", () => {
@@ -64,11 +68,13 @@ describe("ProfileSchema", () => {
 });
 
 describe("ProviderSchema", () => {
-  it("provider 仅接受 shared 的 PROVIDER_IDS", () => {
+  it("provider 接受精选短名单，也接受目录里的 id（不再锁 enum）", () => {
     for (const p of PROVIDER_IDS) {
       expect(ProviderSchema.parse({ provider: p }).provider).toBe(p);
     }
-    expect(() => ProviderSchema.parse({ provider: "claude" })).toThrow();
+    // CLI 会把目录 id 原样写进来，例如 moonshotai / zhipuai
+    expect(ProviderSchema.parse({ provider: "moonshotai" }).provider).toBe("moonshotai");
+    expect(() => ProviderSchema.parse({ provider: "" })).toThrow();
   });
 
   it("apiKey 提供则非空；缺省可无", () => {

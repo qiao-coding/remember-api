@@ -3,7 +3,7 @@
  * 关注：roundtrip、随机 iv（同明文两次密文不同）、GCM 认证（篡改/错 key 必须抛）。
  */
 import { describe, expect, it } from "vitest";
-import { decryptSecret, encryptSecret } from "./crypto";
+import { decryptSecret, encryptSecret } from "@remember/shared";
 
 const KEY = "test-encryption-key-for-unit";
 

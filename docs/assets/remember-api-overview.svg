@@ -1,0 +1,42 @@
+<svg width="1200" height="520" viewBox="0 0 1200 520" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">remember-api overview</title>
+  <desc id="desc">Multiple AI clients connect to one personal memory gateway, which routes to model providers while keeping memory portable.</desc>
+  <rect width="1200" height="520" rx="28" fill="#F7FAFC"/>
+  <rect x="34" y="34" width="1132" height="452" rx="24" fill="#FFFFFF" stroke="#D8E0EA"/>
+  <text x="74" y="92" fill="#0F172A" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700">换工具，不换记忆</text>
+  <text x="74" y="126" fill="#475569" font-family="Inter, Arial, sans-serif" font-size="17">同一份 Personal Memory，通过 OpenAI-compatible API 提供给所有客户端。</text>
+  <g>
+    <rect x="76" y="184" width="210" height="62" rx="14" fill="#ECFDF5" stroke="#A7F3D0"/>
+    <text x="112" y="222" fill="#065F46" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700">Codex</text>
+    <rect x="76" y="266" width="210" height="62" rx="14" fill="#EFF6FF" stroke="#BFDBFE"/>
+    <text x="112" y="304" fill="#1D4ED8" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700">Cursor</text>
+    <rect x="76" y="348" width="210" height="62" rx="14" fill="#FFF7ED" stroke="#FED7AA"/>
+    <text x="112" y="386" fill="#C2410C" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700">Claude Code</text>
+  </g>
+  <path d="M306 215H405" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M306 297H405" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M306 379H405" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M395 205L420 215L395 225" stroke="#94A3B8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M395 287L420 297L395 307" stroke="#94A3B8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M395 369L420 379L395 389" stroke="#94A3B8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="430" y="162" width="340" height="270" rx="24" fill="#101827"/>
+  <text x="470" y="216" fill="#FFFFFF" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="800">remember-api</text>
+  <text x="470" y="250" fill="#CBD5E1" font-family="Inter, Arial, sans-serif" font-size="16">Personal AI Gateway</text>
+  <rect x="470" y="292" width="250" height="42" rx="10" fill="#1E293B" stroke="#334155"/>
+  <text x="492" y="319" fill="#C4B5FD" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Profile is model</text>
+  <rect x="470" y="346" width="250" height="42" rx="10" fill="#1E293B" stroke="#334155"/>
+  <text x="492" y="373" fill="#7DD3FC" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Project Memory</text>
+  <rect x="470" y="400" width="250" height="42" rx="10" fill="#1E293B" stroke="#334155"/>
+  <text x="492" y="427" fill="#86EFAC" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Budget + Usage</text>
+  <path d="M790 297H894" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M884 287L909 297L884 307" stroke="#94A3B8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <g>
+    <rect x="930" y="171" width="190" height="58" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="969" y="207" fill="#0F172A" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">DeepSeek</text>
+    <rect x="930" y="249" width="190" height="58" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="982" y="285" fill="#0F172A" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">GPT</text>
+    <rect x="930" y="327" width="190" height="58" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="966" y="363" fill="#0F172A" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">Claude</text>
+  </g>
+  <text x="430" y="468" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="14">Identity and memory stay with the user. Models are replaceable.</text>
+</svg>

@@ -3,9 +3,10 @@ import { and, eq } from "drizzle-orm";
 import { getDb, conversationWatermarks } from "@remember/db";
 import { estimateTokens } from "@remember/core";
 import { createMemoryProvider } from "@remember/memory";
-import { createProvider } from "@remember/providers";
+import { ProviderError } from "@remember/providers";
 import type { ChatMessage, MemoryType } from "@remember/shared";
 import { env } from "../env.js";
+import { upstreamProvider } from "../lib/upstream.js";
 import type { TurnMemoryInput } from "./memory-write.js";
 
 /**
@@ -16,7 +17,8 @@ import type { TurnMemoryInput } from "./memory-write.js";
  * 持久事实写回同一 mem0 桶（source=archiver）。以 (user_id, project_scope) 在 Postgres 记水线，
  * 同一对话距上次归档增长 ≥ ratio×threshold 才再次归档，失败不推进（下轮重试）。
  *
- * 归档 key 用 env DEEPSEEK_API_KEY（基建级策展，非用户自身 model），避免 chat.ts↔本模块循环依赖。
+ * 归档用的凭据按 (userId, ARCHIVE_PROVIDER) 解析（该用户自己录入的 Key 优先，env 兜底）——
+ * 装配点在 lib/upstream.ts，避免 chat.ts↔本模块循环依赖。
  */
 
 export interface DistilledItem {
@@ -171,7 +173,8 @@ export const ARCHIVE_SYSTEM_PROMPT = `你是长期记忆归档器。下面是一
 4) type 只能取 preference|decision|status|task|issue|history；importance 取 0~1，越高越不可遗漏。
 5) 只输出严格 JSON 数组，例如 [{"type":"decision","content":"项目代号定为 ALPHA-7","importance":0.8}]；没有值得保存的内容时输出 []。不要输出 JSON 之外的文字。`;
 
-let warnedNoKey = false;
+/** 「该用户没配凭据」每用户只 warn 一次，避免每轮刷日志 */
+const warnedNoKeyFor = new Set<string>();
 
 /** 逐项写前去重：只留一次语义 search ≥0.85（不造 list+归一化轮子，mem0 服务端兜精确重复） */
 async function isAlreadyStored(
@@ -229,14 +232,9 @@ async function readWatermark(userId: string, scope: string) {
 export async function maybeArchiveLongConversation(input: TurnMemoryInput): Promise<void> {
   // 记忆被禁用 → 写入与归档都跳过
   if (!input.memoryEnabled) return;
-  // 无提炼 key → 归档不可用（warn 一次即可，避免每轮刷日志）
-  if (!env.DEEPSEEK_API_KEY) {
-    if (!warnedNoKey) {
-      warnedNoKey = true;
-      console.warn("[memory-archive] 未配置 DEEPSEEK_API_KEY，长对话归档跳过");
-    }
-    return;
-  }
+  // 这里**不能**再用 `!env.UPSTREAM_API_KEY` 当前置门槛：凭据现在可以只存在于
+  // provider_configs（CLI 录入），env 为空是本地模式的常态，那样会把摘要静默跳过。
+  // 凭据缺失改由下面的 upstreamProvider 抛出，并按「每用户只 warn 一次」处理。
 
   const provider = createMemoryProvider(
     env.MEM0_BASE_URL
@@ -271,12 +269,7 @@ export async function maybeArchiveLongConversation(input: TurnMemoryInput): Prom
       env.ARCHIVE_MAX_TRANSCRIPT_TOKENS,
     );
     if (!transcript.length) return;
-    const model = createProvider({
-      provider: "deepseek",
-      apiKey: env.DEEPSEEK_API_KEY,
-      baseUrl: env.DEEPSEEK_BASE_URL,
-      defaultModel: env.ARCHIVE_MODEL,
-    });
+    const model = await upstreamProvider(input.userId, env.ARCHIVE_PROVIDER);
     const result = await model.chat({
       model: env.ARCHIVE_MODEL,
       temperature: 0.2,
@@ -314,6 +307,14 @@ export async function maybeArchiveLongConversation(input: TurnMemoryInput): Prom
       lastArchivedTokens: currentTokens,
     });
   } catch (err) {
+    // 没配凭据是常见配置态（不是故障）→ warn 一次；其余错误才是真故障
+    if (err instanceof ProviderError) {
+      if (!warnedNoKeyFor.has(input.userId)) {
+        warnedNoKeyFor.add(input.userId);
+        console.warn("[memory-archive] 未配置提炼凭据，长对话归档跳过：", err.message);
+      }
+      return;
+    }
     console.error("[memory-archive] 归档失败（水线不推进，下轮重试）:", err);
   }
 }

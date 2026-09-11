@@ -1,13 +1,12 @@
 /**
- * 程序化迁移：复用 client.ts 的 SSL/CA 处理（drizzle-kit migrate 不好配 Supabase 私有 CA）。
+ * 程序化迁移 CLI 壳 —— 逻辑在 `migrate-core.ts`（apps/cli 的本地向导复用同一份）。
  * 走 MIGRATE_DATABASE_URL（session pooler / 直连），DDL 必须用可跑事务的连接。
  *
  * 用法：MIGRATE_DATABASE_URL=<url> pnpm migrate
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import { createDb } from "./index.js";
+import { runMigrations } from "./migrate-core.js";
 
 function getMigrateUrl(): string {
   const url = process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -21,8 +20,7 @@ const url = getMigrateUrl();
 const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "..", "drizzle");
 
 async function main() {
-  const db = createDb(url);
-  await migrate(db, { migrationsFolder });
+  await runMigrations(url, migrationsFolder);
   console.log("✅ 迁移完成");
 }
 

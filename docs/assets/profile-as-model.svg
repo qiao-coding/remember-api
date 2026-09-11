@@ -1,0 +1,38 @@
+<svg width="1200" height="620" viewBox="0 0 1200 620" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Profile as model</title>
+  <desc id="desc">A client model name maps to a remember-api profile, which combines provider, project, memories, skills and budget.</desc>
+  <rect width="1200" height="620" rx="28" fill="#F6F8FB"/>
+  <rect x="44" y="44" width="1112" height="532" rx="24" fill="#FFFFFF" stroke="#D8E0EA"/>
+  <text x="84" y="104" fill="#0F172A" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="800">Profile is model</text>
+  <text x="84" y="139" fill="#475569" font-family="Inter, Arial, sans-serif" font-size="17">客户端只填一个 model 名，网关内部把它还原成完整的个人工作模式。</text>
+  <rect x="86" y="210" width="310" height="260" rx="18" fill="#F8FAFC" stroke="#CBD5E1"/>
+  <text x="120" y="258" fill="#0F172A" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="800">OpenAI client</text>
+  <rect x="120" y="298" width="240" height="44" rx="10" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="142" y="326" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="15">base_url: /v1</text>
+  <rect x="120" y="358" width="240" height="44" rx="10" fill="#FFFFFF" stroke="#CBD5E1"/>
+  <text x="142" y="386" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="15">api_key: rma_...</text>
+  <rect x="120" y="418" width="240" height="44" rx="10" fill="#101827"/>
+  <text x="142" y="446" fill="#FFFFFF" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">model: remember-dev</text>
+  <path d="M420 340H520" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M510 330L535 340L510 350" stroke="#94A3B8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="555" y="185" width="270" height="310" rx="20" fill="#111827"/>
+  <text x="593" y="238" fill="#FFFFFF" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="800">Profile</text>
+  <text x="593" y="269" fill="#CBD5E1" font-family="Inter, Arial, sans-serif" font-size="15">remember-dev</text>
+  <g font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">
+    <rect x="593" y="306" width="194" height="38" rx="9" fill="#1E293B"/>
+    <text x="612" y="331" fill="#93C5FD">Provider: DeepSeek</text>
+    <rect x="593" y="356" width="194" height="38" rx="9" fill="#1E293B"/>
+    <text x="612" y="381" fill="#A7F3D0">Project: remember-api</text>
+    <rect x="593" y="406" width="194" height="38" rx="9" fill="#1E293B"/>
+    <text x="612" y="431" fill="#FDE68A">Budget: 1500 tokens</text>
+  </g>
+  <path d="M850 340H936" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M926 330L951 340L926 350" stroke="#94A3B8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="972" y="190" width="128" height="72" rx="15" fill="#EFF6FF" stroke="#BFDBFE"/>
+  <text x="1009" y="233" fill="#1D4ED8" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800">Memory</text>
+  <rect x="972" y="284" width="128" height="72" rx="15" fill="#ECFDF5" stroke="#A7F3D0"/>
+  <text x="1019" y="327" fill="#047857" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800">Skills</text>
+  <rect x="972" y="378" width="128" height="72" rx="15" fill="#FFF7ED" stroke="#FED7AA"/>
+  <text x="1004" y="421" fill="#C2410C" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800">Context</text>
+  <text x="84" y="536" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="15">客户端无须理解 remember 协议。Profile 名就是可选择的 model 名。</text>
+</svg>

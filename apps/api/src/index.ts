@@ -1,16 +1,7 @@
-import { buildApp } from "./app.js";
-import { env } from "./env.js";
+import { startServer } from "./server.js";
 
-const app = buildApp();
-
-const start = async () => {
-  try {
-    await app.listen({ port: env.PORT, host: env.HOST });
-    app.log.info(`remember-api listening on http://${env.HOST}:${env.PORT}`);
-  } catch (err) {
-    app.log.error(err);
-    process.exit(1);
-  }
-};
-
-void start();
+// 薄壳：真正的启动逻辑在 server.ts（CLI 同进程起网关时 import 的是那里）
+void startServer().catch((err: unknown) => {
+  console.error("[boot] 网关启动失败:", err);
+  process.exit(1);
+});

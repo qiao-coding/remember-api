@@ -7,7 +7,7 @@
  * - provider 不再锁 deepseek：custom 缺 baseUrl 拒绝、无 key 回退 MockProvider 且 id 跟随。
  */
 import { describe, expect, it } from "vitest";
-import { createProvider } from "@remember/providers";
+import { createProvider, resolveBaseUrl } from "@remember/providers";
 
 function jsonRes(body: object) {
   return new Response(JSON.stringify(body), {
@@ -74,6 +74,35 @@ describe("createProvider 多模型路由", () => {
     expect(() => createProvider({ provider: "custom", apiKey: "sk-x" })).toThrow(
       /baseUrl/,
     );
+  });
+});
+
+describe("不传 baseUrl 时按 provider 落各家默认端点", () => {
+  // 去厂商锁的承重测试：网关曾经的 bug 是 env 里默认了非空 baseUrl，
+  // 于 resolveBaseUrl 第一行就短路返回，这张默认端点表在真实链路上永远走不到。
+  it("resolveBaseUrl 按 provider 取默认值，留空才回落", () => {
+    expect(resolveBaseUrl("openai", "")).toBe("https://api.openai.com/v1");
+    expect(resolveBaseUrl("deepseek", undefined)).toBe("https://api.deepseek.com");
+    expect(resolveBaseUrl("deepseek", "https://x.test/")).toBe("https://x.test");
+    expect(() => resolveBaseUrl("custom", "")).toThrow(/baseUrl/);
+  });
+
+  it("provider=openai 且没有 baseUrl → 请求打到 OpenAI，而不是 DeepSeek", async () => {
+    const requests: { url: string; body: any }[] = [];
+    const provider = createProvider({
+      provider: "openai",
+      apiKey: "sk-x",
+      fetch: fakeFetch(requests) as unknown as typeof fetch,
+    });
+
+    await provider.chat({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(String(requests[0]!.url)).toContain("api.openai.com/v1");
+    expect(String(requests[0]!.url)).not.toContain("deepseek");
   });
 });
 
