@@ -931,28 +931,62 @@ function tcpProbe(host, port, ms = 8000) {
 
 /**
  * TLS 能不能握上手。**与 TCP 分开测是刻意的**：两者失败的含义完全不同——
- * 「TCP 不通」是网络/DNS，「TCP 通但 TLS 零响应」是出口被拦，而用户看到的现象
- * 都是一句超时。不分开就分不清，排查会绕远路（09-11 实测：TLS ClientHello 发出去
- * 服务器一个字节都不回，跨区域一致，容器里也一样，而同一批主机 443 是通的）。
+ * 「TCP 不通」是网络/DNS，「TCP 通但 TLS 握不上」是中间有东西在挡。
+ *
+ * ⚠️ Postgres 的 TLS **不是从第一个字节开始的**：客户端要先发一个**明文** SSLRequest
+ * （8 字节：int32 长度 8 + int32 code 80877103），服务端回一个 `S` 之后才开始 TLS 握手。
+ * 直接 `tls.connect({host, port})` 怼过去，服务端还在等 SSLRequest 包，于是现象是
+ * 「TLS 零响应 / ERR_SSL_WRONG_VERSION_NUMBER」—— 本脚本 09-11 那条「出口把 5432/6543
+ * 的 TLS 拦了、跨区域一致」的结论就是这么量出来的**假警报**：同一批主机按正确协议
+ * 全部 TLSv1.3 握手成功。探 Postgres 端口必须走 SSLRequest，不能裸 TLS。
  */
 function tlsProbe(host, port, ms = 8000) {
   return new Promise((resolve) => {
-    let sock;
-    try {
-      sock = tlsConnect({ host, port, servername: host, rejectUnauthorized: false }, () => {
-        sock.destroy();
-        resolve("OK");
-      });
-    } catch (e) {
-      return resolve(`ERR ${e.message}`);
-    }
+    let settled = false;
+    const done = (v) => {
+      if (!settled) {
+        settled = true;
+        resolve(v);
+      }
+    };
+    const sock = connect({ host, port });
     sock.setTimeout(ms, () => {
       sock.destroy();
-      resolve("TIMEOUT（TLS 无响应）");
+      done("TIMEOUT（TCP 都不通）");
     });
-    sock.once("error", (e) => {
-      sock.destroy();
-      resolve(`ERR ${e.code ?? e.message}`);
+    sock.once("error", (e) => done(`ERR ${e.code ?? e.message}`));
+    sock.once("connect", () => {
+      const req = Buffer.alloc(8);
+      req.writeInt32BE(8, 0);
+      req.writeInt32BE(80877103, 4);
+      sock.write(req);
+    });
+    sock.once("data", (chunk) => {
+      const first = chunk[0];
+      if (first !== 0x53) {
+        sock.destroy();
+        // 'N' 是服务端明说「我不支持 SSL」，与「被拦」是两回事，别混成一句话
+        return done(
+          first === 0x4e
+            ? "服务端不提供 TLS（SSLRequest 回了 N）"
+            : `SSLRequest 异常应答：${JSON.stringify(chunk.subarray(0, 16).toString("latin1"))}`,
+        );
+      }
+      sock.setTimeout(0); // 超时改由 TLS 那层管
+      let secure;
+      try {
+        secure = tlsConnect({ socket: sock, servername: host, rejectUnauthorized: false }, () => {
+          secure.destroy();
+          done(`OK（${secure.getProtocol()}）`);
+        });
+      } catch (e) {
+        return done(`ERR ${e.message}`);
+      }
+      secure.setTimeout(ms, () => {
+        secure.destroy();
+        done("TIMEOUT（TLS 无响应）");
+      });
+      secure.once("error", (e) => done(`ERR ${e.code ?? e.message}`));
     });
   });
 }
@@ -1196,14 +1230,14 @@ async function runSupabase() {
 
     const tls = await tlsProbe(host, port);
     assert(
-      tls === "OK",
+      tls.startsWith("OK"),
       `${host}:${port} TCP 通、但 TLS 握不上手（${tls}）。\n` +
-        `     这不是密码 / 区域 / 账号的问题：TLS ClientHello 发出去后服务器一个字节都没回。\n` +
-        `     实测形态：换区域（us-west-1、ap-southeast-1 等）同样如此、在容器里跑也一样，\n` +
-        `     而同一批主机的 443 是通的 —— 出口对 5432 / 6543 的 TLS 被拦。\n` +
-        `     换一条网络（境外主机 / 代理）再跑，或过一段时间重试。`,
+        `     这不是密码 / 区域 / 账号的问题（都还没走到那一步）。\n` +
+        `     先排除中间设备：公司代理 / 防火墙拦非标端口的 TLS 是最常见的原因。\n` +
+        `     另注：本步已按 Postgres 协议发 SSLRequest 再升级 TLS；裸 tls.connect 怼\n` +
+        `     Postgres 端口会得到假的「零响应」，别用那个写法去复现。`,
     );
-    return `${host}:${port} TCP + TLS 均通`;
+    return `${host}:${port} TCP + TLS 均通（${tls}）`;
   });
 
   await step("基线快照（清理后要核对回到这里）", async () => {
@@ -1428,12 +1462,32 @@ async function runSupabase() {
       const ref = new URL(creds.base).hostname.split(".")[0];
       const mine = list.find((p) => p.id === ref);
       assert(mine, `登录的账号里没有项目 ${ref} —— 是不是登错账号了`);
-      const host = new URL(creds.migrate).hostname;
+      const migrate = new URL(creds.migrate);
+      const runtime = new URL(creds.runtime);
+      const host = migrate.hostname;
       assert(
         host.includes(mine.region),
         `区域对不上：.env 是 ${host}，CLI 说项目在 ${mine.region} —— 连接串抄错区域了`,
       );
-      return `${ref} 在 ${mine.region}，与连接串一致`;
+
+      // 交叉核对「CLI 推导出的池化主机」的形状 —— 就是 supabase-connect.ts 里那两个候选。
+      // 前缀 aws-0 / aws-1 推不出来（同一区域两种都存在），所以这里只断言它落在候选集里，
+      // 而不是断言某个具体前缀：那等于把「猜一个」写进测试。
+      const prefix = host.split("-").slice(0, 2).join("-");
+      assert(
+        ["aws-0", "aws-1"].includes(prefix),
+        `池化主机前缀不在候选里：${host}（supabase-connect.ts 只试 aws-0 / aws-1）`,
+      );
+      assert(
+        host === `${prefix}-${mine.region}.pooler.supabase.com`,
+        `池化主机拼不出来：${host} vs ${prefix}-${mine.region}.pooler.supabase.com`,
+      );
+      // 两条串必须是同一个主机、只差端口；这是「推不出前缀就真连一次」得以成立的地方
+      assert(runtime.hostname === host, `运行/迁移两条串不是同一个主机：${runtime.hostname} vs ${host}`);
+      assert(runtime.port === "6543", `运行时串端口该是 6543，实际 ${runtime.port}`);
+      assert(migrate.port === "5432", `迁移串端口该是 5432，实际 ${migrate.port}`);
+
+      return `${ref} 在 ${mine.region}，池化主机 ${host}，与连接串一致`;
     });
   } else {
     skipped(

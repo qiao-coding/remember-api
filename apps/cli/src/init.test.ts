@@ -41,6 +41,10 @@ const state = vi.hoisted(() => ({
   smokeThrows: false,
   generated: 0,
   logs: [] as string[],
+  /** 每次 select 的入参（message + options）—— 用来断言「那一项到底有没有出现在选项里」 */
+  selects: [] as { message: string; options: { value: string }[] }[],
+  /** 依次消费的 select 返回值，用光后回落到 "reuse" */
+  selectReplies: [] as string[],
 }));
 
 vi.mock("@clack/prompts", async (importOriginal) => {
@@ -72,7 +76,10 @@ vi.mock("@clack/prompts", async (importOriginal) => {
     // 假谓词会让「取消被当成正常值继续往下走」这条分支变成永远绿。
     isCancel: actual.isCancel,
     // 交互三项都留成 vi.fn：无人值守模式必须**一次都不调用**它们
-    select: vi.fn(async () => "reuse"),
+    select: vi.fn(async (opts: { message: string; options: { value: string }[] }) => {
+      state.selects.push(opts);
+      return state.selectReplies.shift() ?? "reuse";
+    }),
     confirm: vi.fn(async () => true),
     text: vi.fn(async () => ""),
     password: vi.fn(async () => ""),
@@ -230,6 +237,8 @@ beforeEach(() => {
   state.smokeThrows = false;
   state.generated = 0;
   state.logs = [];
+  state.selects = [];
+  state.selectReplies = [];
   process.exitCode = undefined;
   // 默认按「非 TTY」跑：本文件里所有用例都走 --yes，不该有任何交互
   setInteractive(false);
@@ -555,5 +564,88 @@ describe("收尾输出", () => {
     const logs = state.logs.join("\n");
     expect(logs).toMatch(/下一步：remember-api up/);
     expect(logs).toMatch(/interactive|message|success/);
+  });
+});
+
+/** 数据库那一步给的选项值 */
+function dbOptions(): string[] {
+  const step = state.selects.find((s) => s.message === "数据库");
+  return step ? step.options.map((o) => o.value) : [];
+}
+
+describe("数据库这一步的走向 —— 两个被修掉的 bug", () => {
+  const OLD_URL = "postgres://u:p@127.0.0.1:5432/olddb";
+  const NEW_URL = "postgres://u:p@127.0.0.1:5432/newdb";
+
+  /** 带既有库、以交互方式跑一轮（省掉 --url，好让向导真的问数据库这一步） */
+  function interactive(existingDatabase: string | null, replies: string[]): void {
+    const config = existingConfig();
+    state.existing = existingDatabase
+      ? { ...config, database: { url: existingDatabase, migrateUrl: null, docker: null } }
+      : null;
+    state.selectReplies = replies;
+    setInteractive(true);
+  }
+
+  it("选「沿用当前连接串」= 真的沿用：不重新问，也不把原串丢掉", async () => {
+    // 修之前：`opts.url?.trim() ?? askCloudUrl()` —— 交互模式下 opts.url 永远是 undefined，
+    // 于是「沿用」变成「重新问一遍」，用户随手一回车，原来那条串就没了。
+    interactive(OLD_URL, ["reuse", "reuse"]);
+
+    await runInit({ provider: "deepseek", model: "deepseek-v4-flash", key: "sk-new" });
+
+    expect(state.prepared).toEqual([OLD_URL]);
+    // 没问连接串。迁移串那句还会问一次（本机串推不出 5432 的对应关系），所以按内容断言
+    const asked = vi.mocked(text).mock.calls.map((c) => String((c[0] as { message: string }).message));
+    expect(asked.join("\n")).not.toMatch(/Postgres 连接串/);
+    expect(asked.join("\n")).toMatch(/迁移连接串/);
+  });
+
+  it("有既有库时，「接一个 Supabase 项目」必须在选项里 —— 这是原始报障", async () => {
+    // 用户原话：「这没有 supabase 的操作」。
+    interactive(OLD_URL, ["reuse", "reuse"]);
+
+    await runInit({ provider: "deepseek", model: "deepseek-v4-flash", key: "sk-new" });
+
+    expect(dbOptions()).toContain("cloud");
+  });
+
+  it("没装 docker 时也要看得见 Supabase —— 没 docker 的人恰恰最需要它", async () => {
+    // 修之前这条路直接跳到手填，云端入口在没装 docker 的机器上**根本不可见**
+    state.docker = null;
+    state.dockerCli = false;
+    interactive(null, ["manual"]);
+    vi.mocked(text)
+      .mockResolvedValueOnce(NEW_URL) // 手填连接串
+      .mockResolvedValueOnce(""); // 迁移串留空
+
+    await runInit({ provider: "deepseek", model: "deepseek-v4-flash", key: "sk-new" });
+
+    expect(dbOptions()).toContain("cloud");
+    expect(state.prepared).toEqual([NEW_URL]);
+  });
+
+  it("--url 给全时不问数据库这一步（多问一句 = 无人值守挂住）", async () => {
+    state.docker = null;
+    state.dockerCli = false;
+    setInteractive(true);
+
+    await runInit({ ...READY, url: NEW_URL });
+
+    expect(state.selects.map((s) => s.message)).not.toContain("数据库");
+  });
+});
+
+describe("--host：以前解析了却没人读", () => {
+  it("给了就写进 config.server.host，让 up 真的绑到那个地址", async () => {
+    await runInit({ ...READY, url: "postgres://u:p@127.0.0.1:5432/mydb", host: "0.0.0.0" });
+
+    expect(writtenAt(0).server).toMatchObject({ host: "0.0.0.0" });
+  });
+
+  it("没给就保持默认 127.0.0.1（不因为接线把它写没了）", async () => {
+    await runInit({ ...READY, url: "postgres://u:p@127.0.0.1:5432/mydb" });
+
+    expect(writtenAt(0).server).toMatchObject({ host: "127.0.0.1" });
   });
 });
