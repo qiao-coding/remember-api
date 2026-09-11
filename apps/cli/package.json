@@ -1,6 +1,6 @@
 {
   "name": "remember-api",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": false,
   "license": "MIT",
   "description": "npx remember-api —— 在本机起一个带记忆的 OpenAI 兼容网关（不用克隆仓库）",
