@@ -62,11 +62,15 @@ pnpm --dir D:/coding/remember-api --filter @remember/web test
 - 内链前缀跟语言走：zh 用 `/docs/...`，en 用 `/en/docs/...`
 - frontmatter 的 `title`/`description` 值里不能有裸冒号（`:` 后跟空格），YAML 解析失败只有 build 才发现；值里要用冒号就整串加引号
 - 每页 `title` 与 `description` 必填
-- `install-cli` 与 `start/get-started` 走的是 npx 路线，两页都不能出现 `git clone` 和 `UPSTREAM_API_KEY`；两页是否挂「尚未发布到 npm」警告也必须一致（口径不一致会红）
-- Supabase 全流程的 15 个字符串（`6543`、`5432`、`SEED_USER_ID`、`UPSTREAM_API_KEY` 等）钉在 `install-supabase`
+- 安装页按**服务跑在哪**分三种：`install/local`、`install/cloud-db`、`install/cloud-server`。「代码怎么拿」不单独成页，只在 `install/local` 页内分成两个 Tab
+- `install/local` 的两个 Tab 各不串味：npx 段不出现 `git clone` 和 `UPSTREAM_API_KEY`，源码段不出现 `npx remember-api init` / `npx remember-api up`
+- `start/get-started` 走 npx 那条路，整页不许出现 `git clone` 和 `UPSTREAM_API_KEY`；它与 `install/local` 是否挂「尚未发布到 npm」警告必须一致（口径不一致会红）
+- Supabase 全流程的 15 个字符串（`6543`、`5432`、`SEED_USER_ID`、`UPSTREAM_API_KEY` 等）钉在 `install/cloud-db`
 - 全部页面禁止出现 `/dashboard`、`/login`、`进入控制台`、`live connection`
 - `<Steps>`/`<Step>` 已在 `mdx-components.tsx` 全局注册，直接用。`<Step>` 只收 children、没有 `title`，步骤标题在内部写 `###`
 - `<Step>` 里包 `###`、代码块、列表、表格时，JSX 标签前后必须留空行——否则被当行内内容解析，只有 build 报「Expected a closing tag」
+- `<Tab>` 里的标题一律加 ` [!toc]`：非激活 Tab 是 `display:none`，标题却仍会被收进页面 TOC，成了点了不动的死锚
+- ` [!toc]` 只在返回 `rehype`/TOC 的那一层生效；供搜索与 `llms.txt` 用的结构化 `headings` 由 `remarkStructure` 在**更早的 remark 阶段**产出，标记剥不掉，会是 `content:"跑向导 [!toc]"`。fumadocs 15.8.5 里没有更干净的办法（`visit4` 无条件递归、无跳过开关；`[toc]` 是反义；去掉 heading id 或把标记包进元素都会让检查失配、标记直接显示）。**加搜索索引或 `llms.txt` 前先处理这个**
 - 安装页必须保留页顶的 `<InstallSwitcher current="..." locale="..." />`；`quickstart` 保留 `<InstallSwitcher locale="..." />`
 - 各页必须保留的命令字符串（`npx remember-api init`、`pnpm db:migrate`、`docker compose build` 等）见 smoke.test 的 `stepsByMethod`
 
@@ -78,12 +82,12 @@ pnpm --dir D:/coding/remember-api --filter @remember/web build
 
 ## 本仓结构
 
-- `apps/web/content/docs/{zh,en}/<组>/<页>.mdx` — 三组 × 4 页 × 2 语言，外加语言根部的 `index.mdx`
+- `apps/web/content/docs/{zh,en}/<组>/<页>.mdx` — 三组（`start` 4 页、`install` 3 页、`api` 4 页）× 2 语言，外加语言根部的 `index.mdx`
 - 组是**真子目录**：`start/` `install/` `api/`，URL 就是 `/docs/<组>/<页>`
 - 根 `meta.json` 的 `pages` = `["index", "start", "install", "api"]`；各组自己的 `meta.json` 用 `title` 定侧边栏组名、`pages` 定组内顺序
 - 侧边栏靠真子目录 + 子目录 meta 才有可折叠组。根 meta 里写 `"---名称---"` 只渲染成一条静态分割线，组内永远展开——要折叠组就只能建子目录
 - 增删页或改组名，同步改 `content.smoke.test.ts` 的 `SLUGS`/`GROUP_PAGES`/`GROUP_TITLES` 与 `components/__tests__/install-switcher.test.tsx` 的分组断言
-- `InstallSwitcher` 的 `METHODS[].slug` 带分组段（`install/install-cli`）
+- `InstallSwitcher` 的 `METHODS[].slug` 带分组段（`install/local`）
 
 ## 文档页的 className
 

@@ -1,13 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
-import { newId, PROVIDER_IDS } from "@remember/shared";
+import { newId } from "@remember/shared";
 import { getDb, profiles, projects } from "@remember/db";
 import { httpError } from "../../lib/http-error.js";
 
 export const ProfileSchema = z.object({
   name: z.string().min(1),
-  provider: z.enum(PROVIDER_IDS as [string, ...string[]]),
+  // provider id 是自由文本：models.dev 目录有 200+ 家，而 CLI 会写入目录里的 id。
+  // 若这里继续用 z.enum(PROVIDER_IDS)，用户在控制台里编辑 CLI 建的 Profile 会被 400 挡住。
+  provider: z.string().min(1),
   model: z.string().min(1),
   projectId: z.string().min(1),
   systemPrompt: z.string().nullable().optional(),

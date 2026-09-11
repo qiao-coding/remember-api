@@ -1,0 +1,201 @@
+/**
+ * 种子逻辑（可复用）——`seed.ts` 是它的 CLI 壳，`apps/cli` 的本地向导直接调这里。
+ *
+ * 拆出来的原因：`seed.ts` 在模块顶层读 env、`process.exit`、import 即执行，
+ * CLI 一旦 import 就会把进程带走。两端共用同一份数据定义，避免样例数据漂移。
+ */
+import { hashApiKey, maskApiKey, newId, PROVIDER_IDS } from "@remember/shared";
+import { eq } from "drizzle-orm";
+import { getDb, type Db } from "./client.js";
+import { apiKeys, memories, profiles, projects, requestUsage, users } from "./schema.js";
+
+export interface SeedUserOptions {
+  userId: string;
+  email?: string;
+  name?: string;
+  provider: string;
+  model: string;
+  /** API Key 哈希用的 pepper（与网关运行时必须是同一个） */
+  pepper: string;
+  /** 引导 Key 明文；只在建库那一次写进 api_keys（存的是哈希） */
+  bootstrapApiKey: string;
+}
+
+export interface SeedUserResult {
+  /** false = 该用户已有样例项目，本次只补了 bootstrap key */
+  createdDemoData: boolean;
+  /** bootstrap key 绑定的 Profile；null = 该用户还没有 Profile，key 跳过 */
+  bootstrapProfileId: string | null;
+}
+
+/**
+ * 不在精选短名单里不是错误：登记表是 models.dev 目录（200+ 家），
+ * `PROVIDER_IDS` 只是控制台下拉/文档示例用的短名单。返回提示串供调用方打印。
+ */
+export function seedProviderWarning(provider: string): string | null {
+  if (PROVIDER_IDS.includes(provider)) return null;
+  return `SEED_PROVIDER=${provider} 不在精选短名单（${PROVIDER_IDS.join(" | ")}）内，按原样写入。`;
+}
+
+export async function seedUser(
+  opts: SeedUserOptions,
+  db: Db = getDb(),
+): Promise<SeedUserResult> {
+  const userId = opts.userId;
+  const email = opts.email ?? "admin@remember.local";
+  const name = opts.name ?? "Admin";
+
+  // users 父行（幂等：已存在则跳过）
+  await db
+    .insert(users)
+    .values({ id: userId, email, name })
+    .onConflictDoNothing({ target: users.id });
+
+  // 该用户已有样例项目 → 幂等跳过样例数据
+  const userProjects = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.userId, userId))
+    .limit(1);
+  let createdDemoData = false;
+
+  if (userProjects.length === 0) {
+    await db.transaction(async (tx) => {
+      const rememberProject = newId("proj");
+      const citizenProject = newId("proj");
+
+      await tx.insert(projects).values([
+        {
+          id: rememberProject,
+          userId,
+          name: "remember-api",
+          description: "Stateful Personal AI API：跨 AI Harness 共享记忆",
+          summary:
+            "Fastify + PostgreSQL + Drizzle 的 OpenAI 兼容网关，记忆后端走 Mem0（Hermes 同款 provider）",
+          architecture:
+            "Monorepo（pnpm + turbo）：apps/api(Fastify) + apps/web(Next.js) + packages/*",
+          status: "MVP 开发中：OpenAI 网关已规划，Mem0 记忆后端接入待联调",
+          decisions: [
+            "使用 Fastify 而非 NestJS：API 网关结构简单，不需要额外复杂度",
+            "记忆/模型均通过 Adapter 抽象，避免被具体实现锁死",
+          ],
+          knownIssues: [],
+          memoryNamespace: `ns_${rememberProject}`,
+        },
+        {
+          id: citizenProject,
+          userId,
+          name: "citizen-zero",
+          description: "AI 驱动 Galgame 项目",
+          summary: "WebGAL + Express 架构，DeepSeek Flash 驱动",
+          architecture: "水位式句子栈，[标记]格式输出",
+          status: "章节管线已跑通，优化立绘表现",
+          decisions: ["采用水位式句子栈控制对白节奏"],
+          knownIssues: ["立绘表情 AI 生成方案待定"],
+          memoryNamespace: `ns_${citizenProject}`,
+        },
+      ]);
+
+      const profileId = newId("prof");
+      await tx.insert(profiles).values({
+        id: profileId,
+        userId,
+        name: "remember-dev",
+        provider: opts.provider,
+        model: opts.model,
+        projectId: rememberProject,
+        systemPrompt:
+          "你是 remember-api 的核心开发者，代码风格：简洁、类型安全、避免过度抽象。",
+        memoryEnabled: true,
+        memoryBudget: 1500,
+        skillIds: [],
+      });
+
+      await tx.insert(memories).values([
+        {
+          id: newId("mem"),
+          userId,
+          projectId: rememberProject,
+          type: "decision",
+          content: "remember-api 使用 Fastify 作为 API Server，而非 NestJS",
+          importance: 0.9,
+          pinned: true,
+          source: "seed",
+        },
+        {
+          id: newId("mem"),
+          userId,
+          projectId: rememberProject,
+          type: "preference",
+          content: "用户偏好 TypeScript，倾向简单实现而不是过度抽象",
+          importance: 0.8,
+          pinned: true,
+          source: "seed",
+        },
+        {
+          id: newId("mem"),
+          userId,
+          projectId: rememberProject,
+          type: "status",
+          content: "MVP：OpenAI 兼容网关 + Profile/Project/Memory 链路搭建中",
+          importance: 0.7,
+          pinned: false,
+          source: "seed",
+        },
+        {
+          id: newId("mem"),
+          userId,
+          projectId: null,
+          type: "preference",
+          content: "用户主要使用 TypeScript，偏好 React 函数组件",
+          importance: 0.8,
+          pinned: true,
+          source: "seed",
+        },
+      ]);
+
+      await tx.insert(requestUsage).values({
+        id: newId("usage"),
+        userId,
+        profileId,
+        projectId: rememberProject,
+        provider: opts.provider,
+        model: opts.model,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        memoryTokens: 0,
+        skillTokens: 0,
+        latencyMs: 0,
+        estimatedCost: 0,
+      });
+    });
+    createdDemoData = true;
+  }
+
+  // 确保 bootstrap API key 存在（幂等）。新约束：key 必须绑定一个个人 model。
+  const { prefix, last4 } = maskApiKey(opts.bootstrapApiKey);
+  const bootstrapProfile = await db
+    .select({ id: profiles.id })
+    .from(profiles)
+    .where(eq(profiles.userId, userId))
+    .orderBy(profiles.createdAt)
+    .limit(1);
+  const bootstrapProfileId = bootstrapProfile[0]?.id ?? null;
+  if (bootstrapProfileId) {
+    await db
+      .insert(apiKeys)
+      .values({
+        id: newId("key"),
+        userId,
+        name: "bootstrap",
+        profileId: bootstrapProfileId,
+        prefix,
+        last4,
+        hash: hashApiKey(opts.bootstrapApiKey, opts.pepper),
+      })
+      .onConflictDoNothing({ target: apiKeys.hash });
+  }
+
+  return { createdDemoData, bootstrapProfileId };
+}

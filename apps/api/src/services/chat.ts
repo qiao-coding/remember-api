@@ -7,7 +7,6 @@ import {
 } from "@remember/core";
 import { createMemoryProvider } from "@remember/memory";
 import {
-  createProvider,
   sumUsage,
   type ChatResult,
   type ChatUsage,
@@ -20,9 +19,9 @@ import {
   type ChatCompletionRequest,
   type ChatMessage,
   type MemoryType,
-  type ProviderId,
 } from "@remember/shared";
 import { env } from "../env.js";
+import { upstreamProvider } from "../lib/upstream.js";
 import { recordUsage } from "./usage.js";
 import {
   writeTurnMemories,
@@ -239,13 +238,8 @@ export async function prepareChat(
     messages: msgs,
   });
 
-  // 上游 key：env 基建 key（providerConfigs 加密 key 不再参与 chat 路径）
-  const provider = createProvider({
-    provider: profile.provider as ProviderId,
-    apiKey: env.DEEPSEEK_API_KEY,
-    baseUrl: env.DEEPSEEK_BASE_URL,
-    defaultModel: profile.model,
-  });
+  // 上游凭据：该用户的 provider_configs 行优先，env 兜底（见 lib/upstream.ts）
+  const provider = await upstreamProvider(userId, profile.provider);
 
   return {
     userId,

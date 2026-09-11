@@ -21,7 +21,15 @@ import { openAiRoutes } from "./openai.js";
 const getDbMock = vi.fn();
 vi.mock("@remember/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@remember/db")>();
-  return { ...actual, getDb: () => getDbMock() };
+  return {
+    ...actual,
+    getDb: () => getDbMock(),
+    // 凭据助手要在**包边界**上替换：provider-config.ts 内部用相对 import 拿 getDb，
+    // 所以 mock 包入口的 getDb 拦不到它（会去连真库）。这里直接按语义给出「本用户
+    // 没有任何 provider 配置」→ upstream 走「无凭据」分支（test-setup 已把 env 钉空）。
+    findProviderConfig: vi.fn(async () => null),
+    listProviderConfigs: vi.fn(async () => []),
+  };
 });
 vi.mock("@remember/memory", () => ({
   createMemoryProvider: () => ({ search: vi.fn(async () => []) }),
@@ -65,9 +73,9 @@ const projA = {
 function makeDb() {
   const profiles = { findFirst: vi.fn(), findMany: vi.fn() };
   const projects = { findFirst: vi.fn() };
-  const providerConfigs = { findFirst: vi.fn() };
-  const db = { query: { profiles, projects, providerConfigs } };
-  return { db, profiles, projects, providerConfigs };
+  // findFirst：本用户该 provider 的凭据行；findMany：「别家有没有配过」判定用
+  const db = { query: { profiles, projects } };
+  return { db, profiles, projects };
 }
 
 function chatBody(
@@ -109,13 +117,12 @@ describe("/v1 绑定 key 隔离语义", () => {
   });
 
   it("绑定 key + 上游别名(非本用户 profile 名) → 容忍，用绑定 profile", async () => {
-    const { db, profiles, projects, providerConfigs } = makeDb();
+    const { db, profiles, projects } = makeDb();
     getDbMock.mockReturnValue(db);
     profiles.findFirst
       .mockResolvedValueOnce(profA) // 载入绑定
       .mockResolvedValueOnce(undefined); // 别名不命中任何 profile
     projects.findFirst.mockResolvedValue(projA);
-    providerConfigs.findFirst.mockResolvedValue(undefined); // 走 env 兜底
 
     const prepared: PreparedChat = await prepareChat(
       "user_a",

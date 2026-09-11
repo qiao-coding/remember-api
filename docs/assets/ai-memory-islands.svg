@@ -1,0 +1,37 @@
+<svg width="1200" height="560" viewBox="0 0 1200 560" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">AI memory islands</title>
+  <desc id="desc">Different AI ecosystems keep separate user context, creating repeated explanation work for the user.</desc>
+  <rect width="1200" height="560" rx="28" fill="#F8FAFC"/>
+  <rect x="40" y="40" width="1120" height="480" rx="24" fill="#FFFFFF" stroke="#D8E0EA"/>
+  <text x="82" y="104" fill="#0F172A" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="800">市场痛点：用户数据被分散在各家生态里</text>
+  <text x="82" y="138" fill="#475569" font-family="Inter, Arial, sans-serif" font-size="17">每个 AI 工具都在认识你，但它们彼此不通。</text>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <rect x="88" y="214" width="210" height="170" rx="20" fill="#EFF6FF" stroke="#BFDBFE"/>
+    <text x="128" y="258" fill="#1D4ED8" font-size="22" font-weight="800">ChatGPT</text>
+    <text x="124" y="302" fill="#334155" font-size="15">记住日常偏好</text>
+    <text x="124" y="330" fill="#334155" font-size="15">知道表达习惯</text>
+
+    <rect x="360" y="214" width="210" height="170" rx="20" fill="#F5F3FF" stroke="#DDD6FE"/>
+    <text x="410" y="258" fill="#6D28D9" font-size="22" font-weight="800">Claude</text>
+    <text x="396" y="302" fill="#334155" font-size="15">记住长文上下文</text>
+    <text x="396" y="330" fill="#334155" font-size="15">知道写作偏好</text>
+
+    <rect x="632" y="214" width="210" height="170" rx="20" fill="#ECFDF5" stroke="#A7F3D0"/>
+    <text x="688" y="258" fill="#047857" font-size="22" font-weight="800">Cursor</text>
+    <text x="668" y="302" fill="#334155" font-size="15">知道项目代码</text>
+    <text x="668" y="330" fill="#334155" font-size="15">知道当前任务</text>
+
+    <rect x="904" y="214" width="210" height="170" rx="20" fill="#FFF7ED" stroke="#FED7AA"/>
+    <text x="962" y="258" fill="#C2410C" font-size="22" font-weight="800">Codex</text>
+    <text x="940" y="302" fill="#334155" font-size="15">知道改动历史</text>
+    <text x="940" y="330" fill="#334155" font-size="15">知道失败尝试</text>
+  </g>
+
+  <path d="M298 299H360" stroke="#CBD5E1" stroke-width="3" stroke-dasharray="7 8"/>
+  <path d="M570 299H632" stroke="#CBD5E1" stroke-width="3" stroke-dasharray="7 8"/>
+  <path d="M842 299H904" stroke="#CBD5E1" stroke-width="3" stroke-dasharray="7 8"/>
+
+  <rect x="383" y="430" width="434" height="52" rx="14" fill="#0F172A"/>
+  <text x="426" y="463" fill="#FFFFFF" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="800">同一个用户，被拆成多个互不相通的 AI 画像</text>
+</svg>

@@ -7,13 +7,16 @@ try {
   // 无 .env 文件时跳过（如生产环境直接注入环境变量）
 }
 
-const EnvSchema = z.object({
+export const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL 必填"),
   // auth 模块与 api 网关解耦：SUPABASE_URL 为空 = 网关-only 模式（仅 /v1 + /health，不挂 /api 管理路由）
   SUPABASE_URL: z.string().optional().default(""),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(""),
-  DEEPSEEK_API_KEY: z.string().optional().default(""),
-  DEEPSEEK_BASE_URL: z.string().optional().default("https://api.deepseek.com"),
+  // ── 上游模型凭据（任意 OpenAI 兼容厂商；DeepSeek 只是默认示例）──
+  // UPSTREAM_BASE_URL 必须默认空：留空时由 provider 层按 Profile 的 provider 取各家默认端点
+  // （packages/providers/src/sdk.ts DEFAULT_BASE_URL）。填了非空值就会把所有 provider 短路到同一家。
+  UPSTREAM_API_KEY: z.string().optional().default(""),
+  UPSTREAM_BASE_URL: z.string().optional().default(""),
   MEM0_BASE_URL: z.string().optional().default(""),
   MEM0_API_KEY: z.string().optional().default(""),
   API_KEY_PEPPER: z.string().optional().default("change-me-in-production"),
@@ -29,7 +32,9 @@ const EnvSchema = z.object({
   ARCHIVE_MAX_TRANSCRIPT_TOKENS: z.coerce.number().optional().default(6000),
   // 单次归档最多提炼条数
   ARCHIVE_MAX_ITEMS: z.coerce.number().optional().default(12),
-  // 归档提炼用模型（默认网关同款）
+  // 归档提炼用 provider/模型（默认网关同款 deepseek）；换厂商必须成对设置，
+  // 否则会把 deepseek-chat 这个模型名发到别家端点上去。
+  ARCHIVE_PROVIDER: z.string().optional().default("deepseek"),
   ARCHIVE_MODEL: z.string().optional().default("deepseek-chat"),
   // ── recent 高密度会话摘要（profile 隔离，跨会话交接块）──
   // minTokens：会话累计到这个值才首产摘要；growthTokens：距上次摘要增长到这值才滚动刷新；

@@ -20,26 +20,47 @@ function loadCa(): string | undefined {
 
 export type Db = PostgresJsDatabase<typeof schema>;
 
-/**
- * 惰性单例 —— 首次访问时才连接，避免 import 阶段因缺 DATABASE_URL 报错。
- */
-let _db: Db | null = null;
-let _url = "";
+export interface ClientOptions {
+  /** 默认 10；探针/迁移这类一次性连接传 1 */
+  max?: number;
+  /**
+   * 连接超时（**秒**）。
+   * 注意选项名是 snake_case 的 `connect_timeout` —— postgres-js 不认 camelCase，
+   * 写错不会报错，只会让「连不上」变成「永远连不上」（调用方在那里静止等待）。
+   */
+  connectTimeout?: number;
+  onnotice?: () => void;
+}
 
-export function createDb(url: string): Db {
+/**
+ * 裸连接工厂 —— 需要直接发 SQL（CREATE DATABASE、`SELECT 1` 探活、迁移后 `end()`）
+ * 或需要自己管生命周期的调用方走这里，SSL/根 CA 的判定与 createDb 完全一致：
+ * 两套判定漂移过一次就会出现「网关连得上、CLI 探针连不上」这种鬼故事。
+ */
+export function createClient(url: string, opts: ClientOptions = {}) {
   // Supabase 强制 SSL：连接串带 sslmode=require 或显式 DATABASE_SSL=require 时开启 TLS
   // 使用 verify-full 语义（校验证书与主机名，含 Supabase 私有根 CA），不做降级
   const ssl =
     url.includes("sslmode=require") || process.env.DATABASE_SSL === "require";
   const ca = ssl ? loadCa() : undefined;
-  const client = postgres(url, {
-    max: 10,
+  return postgres(url, {
+    max: opts.max ?? 10,
     prepare: false, // postgres-js 不支持 pg 预编译，需关闭（Supabase 事务池必需）
-    ...(ssl
-      ? { ssl: { rejectUnauthorized: true, ...(ca ? { ca } : {}) } }
-      : {}),
+    ...(opts.connectTimeout ? { connect_timeout: opts.connectTimeout } : {}),
+    ...(opts.onnotice ? { onnotice: opts.onnotice } : {}),
+    ...(ssl ? { ssl: { rejectUnauthorized: true, ...(ca ? { ca } : {}) } } : {}),
   });
-  return drizzle(client, { schema });
+}
+
+/**
+ * 惰性单例 —— 首次访问时才连接，避免 import 阶段因缺 DATABASE_URL 报错。
+ */
+let _db: Db | null = null;
+let _client: ReturnType<typeof createClient> | null = null;
+let _url = "";
+
+export function createDb(url: string): Db {
+  return drizzle(createClient(url), { schema });
 }
 
 export function getDb(): Db {
@@ -48,8 +69,22 @@ export function getDb(): Db {
     throw new Error("DATABASE_URL is not set");
   }
   if (!_db || _url !== url) {
-    _db = createDb(url);
+    _client = createClient(url);
+    _db = drizzle(_client, { schema });
     _url = url;
   }
   return _db;
+}
+
+/**
+ * 断开单例连接池。**一次性命令（CLI 的 status/model/key/init）必须调它**：
+ * 池的 keep-alive 会让事件循环一直有活干，node 进程永远不退出 —— 用户看到的是
+ * 「命令跑完了、输出也打了，但光标不回来」。长驻进程（网关）不要调。
+ */
+export async function closeDb(): Promise<void> {
+  const client = _client;
+  _client = null;
+  _db = null;
+  _url = "";
+  await client?.end();
 }

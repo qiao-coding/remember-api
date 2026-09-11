@@ -1,14 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
-import { newId, PROVIDER_IDS } from "@remember/shared";
-import { getDb, providerConfigs } from "@remember/db";
+import { getDb, providerConfigs, upsertProviderConfig } from "@remember/db";
+import { encryptSecret } from "@remember/shared";
 import { env } from "../../env.js";
-import { encryptSecret } from "../../lib/crypto.js";
 import { httpError } from "../../lib/http-error.js";
 
 export const ProviderSchema = z.object({
-  provider: z.enum(PROVIDER_IDS as [string, ...string[]]),
+  // provider id 在库里是自由文本（models.dev 目录有 200+ 家）。这里只挡空串；
+  // 拼错的 id 由 resolveBaseUrl / 目录查找在调用时给出可读错误，而不是在录入时就拒。
+  provider: z.string().min(1),
   baseUrl: z.string().nullable().optional(),
   defaultModel: z.string().nullable().optional(),
   /** 明文 Provider Key，仅创建/更新时提交 */
@@ -36,49 +37,18 @@ export async function managerProvidersRoutes(app: FastifyInstance) {
     return rows.map(toView);
   });
 
-  // 创建/更新（upsert）：新 Key 加密存储
+  // 创建/更新（upsert）：新 Key 加密存储。
+  // 字段语义见 @remember/db 的 upsertProviderConfig：不传 = 保留现有，null = 清空。
   app.post("/providers", async (req) => {
     const body = ProviderSchema.parse(req.body);
-    const userId = req.admin!.userId;
-
-    const existing = (
-      await getDb()
-        .select()
-        .from(providerConfigs)
-        .where(
-          and(
-            eq(providerConfigs.userId, userId),
-            eq(providerConfigs.provider, body.provider),
-          ),
-        )
-        .limit(1)
-    )[0];
-
-    const values = {
-      baseUrl: body.baseUrl ?? null,
-      defaultModel: body.defaultModel ?? null,
-      apiKeyEncrypted: body.apiKey
-        ? encryptSecret(body.apiKey, env.ENCRYPTION_KEY)
-        : existing?.apiKeyEncrypted ?? null,
-      isConnected: Boolean(body.apiKey) || Boolean(existing?.apiKeyEncrypted),
-    };
-
-    if (existing) {
-      await getDb()
-        .update(providerConfigs)
-        .set({ ...values, updatedAt: new Date() })
-        .where(eq(providerConfigs.id, existing.id));
-      return { id: existing.id };
-    }
-
-    const id = newId("prov");
-    await getDb().insert(providerConfigs).values({
-      id,
-      userId,
+    return upsertProviderConfig({
+      userId: req.admin!.userId,
       provider: body.provider,
-      ...values,
+      encryptionKey: env.ENCRYPTION_KEY,
+      baseUrl: body.baseUrl,
+      defaultModel: body.defaultModel,
+      apiKey: body.apiKey,
     });
-    return { id };
   });
 
   app.patch("/providers/:id", async (req) => {

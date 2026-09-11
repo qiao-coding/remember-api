@@ -38,7 +38,13 @@ type Prompt = DoOptions["prompt"];
 type PromptMessage = Prompt[number];
 type GenerateResult = Awaited<ReturnType<SdkLanguageModel["doGenerate"]>>;
 
-/** 各家 OpenAI 兼容端点的默认 baseURL（custom 无默认，必须用户填） */
+/**
+ * 精选厂商的默认 baseURL —— **不是全集**。
+ *
+ * models.dev 目录里 173 家能走这层 OpenAI 兼容桥，但只有这 4 家有内置默认端点；
+ * 其余（含目录里 26 家没有 `api` 字段的）必须由配置显式提供 baseUrl，否则每次请求都 400。
+ * CLI 从目录的 `provider.api` 写入 provider_configs.baseUrl，正是为了让这张表不必再长大。
+ */
 const DEFAULT_BASE_URL: Partial<Record<ProviderId, string>> = {
   deepseek: "https://api.deepseek.com",
   openai: "https://api.openai.com/v1",
@@ -53,7 +59,7 @@ export function resolveBaseUrl(provider: ProviderId, baseUrl?: string): string {
     throw new ProviderError(
       provider === "custom"
         ? "custom Provider 需要在配置里填写 baseUrl"
-        : `暂不支持的 Provider: ${provider}`,
+        : `Provider「${provider}」没有内置默认端点，需要在 provider 配置里填写 baseUrl。`,
     );
   }
   return fallback;

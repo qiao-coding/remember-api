@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@remember/shared";
+import { encryptSecret } from "@remember/shared";
 import { conversationIdOf } from "./memory-archive.js";
 import type { TurnMemoryInput } from "./memory-write.js";
 import {
@@ -35,27 +36,39 @@ const h = vi.hoisted(() => {
   return {
     db,
     chatSpy: vi.fn(async () => ({ content: "" })),
+    /** findProviderConfig 的返回值（null = 该用户没配这家） */
+    credRow: null as Record<string, unknown> | null,
+    env: {
+      UPSTREAM_API_KEY: "sk-x",
+      UPSTREAM_BASE_URL: "",
+      ENCRYPTION_KEY: "test-encryption-key",
+      RECENT_MIN_TOKENS: 1000,
+      RECENT_GROWTH_TOKENS: 800,
+      RECENT_MAX_TRANSCRIPT_TOKENS: 3000,
+      RECENT_MAX_INJECT_TOKENS: 300,
+      ARCHIVE_PROVIDER: "deepseek",
+      ARCHIVE_MODEL: "deepseek-chat",
+    },
   };
 });
 
 vi.mock("@remember/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@remember/db")>();
-  return { ...actual, getDb: () => h.db };
+  return {
+    ...actual,
+    getDb: () => h.db,
+    // 同上：凭据助手内部用相对 import 拿 getDb，只在包边界替换才拦得住。
+    // 默认 credRow=null → upstream 走 env 分支（本文件 env mock 里 UPSTREAM_API_KEY="sk-x"）。
+    findProviderConfig: vi.fn(async () => h.credRow),
+    listProviderConfigs: vi.fn(async () => []),
+  };
 });
-vi.mock("@remember/providers", () => ({
+// 展开 actual：ProviderError 是真类（错误分支靠 instanceof 判），只换掉 createProvider
+vi.mock("@remember/providers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@remember/providers")>()),
   createProvider: () => ({ chat: h.chatSpy }),
 }));
-vi.mock("../env.js", () => ({
-  env: {
-    DEEPSEEK_API_KEY: "sk-x",
-    DEEPSEEK_BASE_URL: "",
-    RECENT_MIN_TOKENS: 1000,
-    RECENT_GROWTH_TOKENS: 800,
-    RECENT_MAX_TRANSCRIPT_TOKENS: 3000,
-    RECENT_MAX_INJECT_TOKENS: 300,
-    ARCHIVE_MODEL: "deepseek-chat",
-  },
-}));
+vi.mock("../env.js", () => ({ env: h.env }));
 
 interface Row {
   activeConversationId: string;
@@ -78,6 +91,8 @@ function resetDb() {
   h.db.query.conversationSummaries.findFirst.mockResolvedValue(undefined);
   h.chatSpy.mockReset();
   h.chatSpy.mockResolvedValue({ content: "" });
+  h.credRow = null;
+  h.env.UPSTREAM_API_KEY = "sk-x";
 }
 
 describe("decideRecentSummarize（纯判定）", () => {
@@ -242,6 +257,26 @@ describe("maybeUpdateRecentThread（fire-and-forget 门 + 首产）", () => {
     // active 刷新只 set active 槽，绝不动 prev（prev 只由 loadRecentThread seal 写）
     expect(rec.set!.prevSummaryText).toBeUndefined();
     expect(rec.set!.activeConversationId).toBe(convId);
+  });
+
+  // 凭据从 env 搬到 provider_configs 后最容易踩的坑：前置门槛还按 `!env.UPSTREAM_API_KEY`
+  // 早退，于是本地模式下（env 空、Key 只在库里）摘要被**静默跳过** —— 没有任何报错。
+  it("env 无 key、Key 只在 provider_configs 里 → 照常产摘要（不被静默跳过）", async () => {
+    h.env.UPSTREAM_API_KEY = "";
+    h.credRow = {
+      provider: "deepseek",
+      baseUrl: null,
+      apiKeyEncrypted: encryptSecret("sk-in-db", h.env.ENCRYPTION_KEY),
+    };
+    h.chatSpy.mockResolvedValue({ content: "摘要" });
+    const long = "x".repeat(5000); // ≈1250 token
+
+    await maybeUpdateRecentThread(
+      input({ messages: [{ role: "user", content: long }], userMessage: long }),
+    );
+
+    expect(h.chatSpy).toHaveBeenCalledTimes(1);
+    expect(h.db.inserted).toHaveLength(1);
   });
 
   it("DB 读失败 → 吞错（fire-and-forget 不 throw）", async () => {

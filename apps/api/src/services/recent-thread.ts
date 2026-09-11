@@ -1,8 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { getDb, conversationSummaries } from "@remember/db";
 import { estimateTokens, truncateToTokens } from "@remember/core";
-import { createProvider } from "@remember/providers";
+import { ProviderError } from "@remember/providers";
 import { env } from "../env.js";
+import { upstreamProvider } from "../lib/upstream.js";
 import {
   buildTranscript,
   conversationIdOf,
@@ -41,7 +42,8 @@ export const RECENT_SYSTEM_PROMPT = `你是会话交接摘要器。下面是一�
 - 本段达成的关键结论 / 决定 / 简短上下文
 要求：1) 不超过 8 句精炼陈述句，保留专名/代号/技术名；不要用"用户说"开头转述，直接写事实。2) 只写影响后续的信息，丢寒暄与过程。3) 只输出摘要正文本身，不要任何标签、JSON 或解释。`;
 
-let warnedNoKey = false;
+/** 「该用户没配凭据」每用户只 warn 一次，避免每轮刷日志 */
+const warnedNoKeyFor = new Set<string>();
 
 export interface RecentRow {
   activeConversationId: string;
@@ -177,19 +179,13 @@ export async function loadRecentThread(args: {
 
 /**
  * 回合结束后滚动刷新 active 摘要（fire-and-forget、吞错；与 maybeArchiveLongConversation 并列）。
- * 输入与写/归档同源（TurnMemoryInput）；会话累计 ≥ minTokens 才碰 DB，够长才调 DeepSeek 提炼。
+ * 输入与写/归档同源（TurnMemoryInput）；会话累计 ≥ minTokens 才碰 DB，够长才调 ARCHIVE_PROVIDER 提炼。
  */
 export async function maybeUpdateRecentThread(
   input: TurnMemoryInput,
 ): Promise<void> {
   if (!input.memoryEnabled) return;
-  if (!env.DEEPSEEK_API_KEY) {
-    if (!warnedNoKey) {
-      warnedNoKey = true;
-      console.warn("[recent-thread] 未配置 DEEPSEEK_API_KEY，recent 摘要跳过");
-    }
-    return;
-  }
+  // 凭据可以只存在于 provider_configs（CLI 录入）→ 不能用 env 为空当门槛（同 memory-archive）
 
   const conversationId = conversationIdOf(input.messages);
   if (!conversationId) return;
@@ -216,12 +212,7 @@ export async function maybeUpdateRecentThread(
       env.RECENT_MAX_TRANSCRIPT_TOKENS,
     );
     if (!transcript.length) return;
-    const model = createProvider({
-      provider: "deepseek",
-      apiKey: env.DEEPSEEK_API_KEY,
-      baseUrl: env.DEEPSEEK_BASE_URL,
-      defaultModel: env.ARCHIVE_MODEL,
-    });
+    const model = await upstreamProvider(input.userId, env.ARCHIVE_PROVIDER);
     const result = await model.chat({
       model: env.ARCHIVE_MODEL,
       temperature: 0.2,
@@ -240,6 +231,14 @@ export async function maybeUpdateRecentThread(
       maxInjectTokens: env.RECENT_MAX_INJECT_TOKENS,
     });
   } catch (err) {
+    // 没配凭据是常见配置态（不是故障）→ warn 一次；其余错误才是真故障
+    if (err instanceof ProviderError) {
+      if (!warnedNoKeyFor.has(input.userId)) {
+        warnedNoKeyFor.add(input.userId);
+        console.warn("[recent-thread] 未配置提炼凭据，recent 摘要跳过：", err.message);
+      }
+      return;
+    }
     console.error("[recent-thread] 摘要失败（下轮重试）:", err);
   }
 }

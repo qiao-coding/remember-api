@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { getDb, profiles } from "@remember/db";
+import { ProviderError } from "@remember/providers";
 import type { ChatCompletion, ChatCompletionRequest } from "@remember/shared";
 import { apiKeyAuthHook } from "../plugins/api-key-auth.js";
 import {
@@ -96,6 +97,18 @@ export async function openAiRoutes(app: FastifyInstance) {
             message: err.message,
             type: "model_not_found",
             code: "model_not_found",
+            param: "model",
+          },
+        });
+      }
+      // 上游没配好（如 custom Profile 但 UPSTREAM_BASE_URL 为空）→ 400 原样透给客户端，
+      // 否则这里会变成一句没有信息量的 500。
+      if (err instanceof ProviderError) {
+        return reply.code(400).send({
+          error: {
+            message: err.message,
+            type: "invalid_request_error",
+            code: "provider_not_configured",
             param: "model",
           },
         });

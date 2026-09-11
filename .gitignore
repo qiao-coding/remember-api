@@ -8,6 +8,11 @@ build/
 out/
 .turbo/
 *.tsbuildinfo
+# CLI 构建期从 packages/db 拷来的迁移 SQL 与证书（见 apps/cli/scripts/copy-assets.mjs）
+apps/cli/drizzle/
+apps/cli/certs/
+# npm pack 产物（发布用，不入库）
+*.tgz
 # fumadocs codegen
 .source/
 

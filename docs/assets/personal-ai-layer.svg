@@ -1,0 +1,52 @@
+<svg width="1200" height="600" viewBox="0 0 1200 600" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Personal AI layer</title>
+  <desc id="desc">remember-api extracts user identity, memory and project state into a portable personal AI layer.</desc>
+  <rect width="1200" height="600" rx="28" fill="#F7FAFC"/>
+  <rect x="44" y="44" width="1112" height="512" rx="24" fill="#FFFFFF" stroke="#D8E0EA"/>
+  <text x="84" y="105" fill="#0F172A" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="800">解决思路：把长期上下文抽成用户自己的中枢</text>
+  <text x="84" y="140" fill="#475569" font-family="Inter, Arial, sans-serif" font-size="17">客户端可以很多，模型可以很多，但个人 AI 状态只维护一份。</text>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <rect x="86" y="214" width="180" height="54" rx="14" fill="#EFF6FF" stroke="#BFDBFE"/>
+    <text x="126" y="248" fill="#1D4ED8" font-size="17" font-weight="800">Chat App</text>
+    <rect x="86" y="292" width="180" height="54" rx="14" fill="#F5F3FF" stroke="#DDD6FE"/>
+    <text x="126" y="326" fill="#6D28D9" font-size="17" font-weight="800">IDE Agent</text>
+    <rect x="86" y="370" width="180" height="54" rx="14" fill="#ECFDF5" stroke="#A7F3D0"/>
+    <text x="121" y="404" fill="#047857" font-size="17" font-weight="800">Writing Tool</text>
+  </g>
+
+  <path d="M292 241H398" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M292 319H398" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M292 397H398" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M388 231L414 241L388 251" stroke="#94A3B8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M388 309L414 319L388 329" stroke="#94A3B8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M388 387L414 397L388 407" stroke="#94A3B8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="430" y="186" width="340" height="276" rx="26" fill="#111827"/>
+  <text x="484" y="241" fill="#FFFFFF" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="800">Personal AI Layer</text>
+  <text x="507" y="274" fill="#CBD5E1" font-family="Inter, Arial, sans-serif" font-size="16">remember-api</text>
+  <g font-family="Inter, Arial, sans-serif" font-size="14" font-weight="800">
+    <rect x="480" y="314" width="118" height="40" rx="10" fill="#1E293B"/>
+    <text x="508" y="340" fill="#BAE6FD">Identity</text>
+    <rect x="612" y="314" width="118" height="40" rx="10" fill="#1E293B"/>
+    <text x="644" y="340" fill="#BBF7D0">Memory</text>
+    <rect x="480" y="370" width="118" height="40" rx="10" fill="#1E293B"/>
+    <text x="507" y="396" fill="#FDE68A">Projects</text>
+    <rect x="612" y="370" width="118" height="40" rx="10" fill="#1E293B"/>
+    <text x="647" y="396" fill="#DDD6FE">Skills</text>
+  </g>
+
+  <path d="M794 324H906" stroke="#94A3B8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M896 314L922 324L896 334" stroke="#94A3B8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <rect x="940" y="206" width="178" height="58" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="982" y="242" fill="#0F172A" font-size="17" font-weight="800">DeepSeek</text>
+    <rect x="940" y="284" width="178" height="58" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="1000" y="320" fill="#0F172A" font-size="17" font-weight="800">GPT</text>
+    <rect x="940" y="362" width="178" height="58" rx="14" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <text x="985" y="398" fill="#0F172A" font-size="17" font-weight="800">Claude</text>
+  </g>
+
+  <text x="84" y="510" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="15">AI App 可以换，Provider 可以换，用户自己的上下文不换。</text>
+</svg>
