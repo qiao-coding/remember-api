@@ -1,0 +1,45 @@
+# ── 构建上下文裁剪：只喂 Docker 构建需要的文件，杜绝把密钥/产物/仓库历史塞进镜像 ──
+
+# 依赖与本地产物（各 app/package 深度排除）
+**/node_modules
+**/.next
+**/.turbo
+**/.source
+**/dist
+**/coverage
+**/.cache
+**/.vitest
+**/.vite
+
+# 环境与密钥：一律不进镜像（.env / .env.* 都是 secrets，含 .env.production / .env.local）
+**/.env
+**/.env.*
+!.env.production.example
+
+# VCS / 编辑器 / 系统
+.git
+.gitignore
+**/.git
+**/.hg
+**/.svn
+*.tsbuildinfo
+**/*.tsbuildinfo
+.idea
+.vscode
+**/Thumbs.db
+**/.DS_Store
+
+# 本地开发残留（mem0 venv、输出、临时）
+**/.mem0-venv
+**/output
+**/.tmp-*
+**/.pytest_cache
+**/__pycache__
+
+# 文档不进镜像（builder 只读清单+源码编译；runbook/README 留在宿主机）
+*.md
+docs
+
+# 平台部署编排文件宿主机才有（镜像内不需要 compose / secrets）
+docker-compose*.yml
+.secrets

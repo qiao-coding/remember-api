@@ -56,9 +56,7 @@ remember-api：*.md
 # web 控制台（Next.js 15 + Fumadocs 文档站）
 apps/web/
 
-# 部署/服务栈（docker compose 对外服务 + 构建 + runbook + mem0 记忆桥）—— 公共服务器开发中
-Dockerfile
-docker-compose.yml
-.dockerignore
-scripts/deploy/
-scripts/mem0-bridge/
+# 部署/服务栈 —— 2026-09-13 起**纳入云端**。
+# 原因：VPS 部署流程要求 `git clone` 后即可 build，而此前这几个文件被排除，
+# 导致文档里的 `git clone` → `docker compose build` 实际跑不通（Dockerfile 根本不在仓库里）。
+# 密钥类仍在上面「env & secrets」段排除：.env.production / .secrets/ / *.pem。
