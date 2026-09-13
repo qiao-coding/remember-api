@@ -6,10 +6,21 @@ import postgres from "postgres";
 import * as schema from "./schema.js";
 
 // Supabase 用私有根 CA（Supabase Root 2021 CA）签证书，系统信任库没有；
-// 此处加载项目内已抓取的根 CA 链，保持 rejectUnauthorized: true（验证开启）
+// 此处加载根 CA 链，保持 rejectUnauthorized: true（验证开启）
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CA = join(HERE, "..", "certs", "supabase-ca.pem");
+
+/**
+ * 根 CA 来源，按优先级：
+ *   1. `DATABASE_SSL_CA_PEM` —— 直接给 PEM **内容**。托管平台（Railway / Zeabur 等）
+ *      没法挂载文件，只能走这条；`.pem` 被 gitignore 排除，从 Git 构建的镜像里也不会有。
+ *   2. `DATABASE_SSL_CA` —— 给文件**路径**（compose 的 secret 挂载、本机指定别的 CA）。
+ *   3. 包内 `certs/supabase-ca.pem` —— 本机开发。
+ * 都拿不到就返回 undefined，交给系统信任库（连公开 CA 的 Postgres 够用）。
+ */
 function loadCa(): string | undefined {
+  const inline = process.env.DATABASE_SSL_CA_PEM;
+  if (inline?.trim()) return inline;
   const path = process.env.DATABASE_SSL_CA ?? DEFAULT_CA;
   try {
     return readFileSync(path, "utf8");
