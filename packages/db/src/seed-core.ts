@@ -7,7 +7,7 @@
 import { hashApiKey, maskApiKey, newId, PROVIDER_IDS } from "@remember/shared";
 import { eq } from "drizzle-orm";
 import { getDb, type Db } from "./client.js";
-import { apiKeys, memories, profiles, projects, requestUsage, users } from "./schema.js";
+import { apiKeys, profiles, projects, requestUsage, users } from "./schema.js";
 
 export interface SeedUserOptions {
   userId: string;
@@ -52,6 +52,8 @@ export async function seedUser(
     .onConflictDoNothing({ target: users.id });
 
   // 该用户已有样例项目 → 幂等跳过样例数据
+  // ⚠️ projects 是这条幂等判定的哨兵：整块样例数据（含 profile）靠它判断"种过没有"。
+  // 删掉这些样例项目，重跑种子会再插一个同名 profile（/v1/models 按名字查）。
   const userProjects = await db
     .select()
     .from(projects)
@@ -118,48 +120,8 @@ export async function seedUser(
         skillIds: [],
       });
 
-      await tx.insert(memories).values([
-        {
-          id: newId("mem"),
-          userId,
-          projectId: rememberProject,
-          type: "decision",
-          content: "remember-api 使用 Fastify 作为 API Server，而非 NestJS",
-          importance: 0.9,
-          pinned: true,
-          source: "seed",
-        },
-        {
-          id: newId("mem"),
-          userId,
-          projectId: rememberProject,
-          type: "preference",
-          content: "用户偏好 TypeScript，倾向简单实现而不是过度抽象",
-          importance: 0.8,
-          pinned: true,
-          source: "seed",
-        },
-        {
-          id: newId("mem"),
-          userId,
-          projectId: rememberProject,
-          type: "status",
-          content: "MVP：OpenAI 兼容网关 + Profile/Project/Memory 链路搭建中",
-          importance: 0.7,
-          pinned: false,
-          source: "seed",
-        },
-        {
-          id: newId("mem"),
-          userId,
-          projectId: null,
-          type: "preference",
-          content: "用户主要使用 TypeScript，偏好 React 函数组件",
-          importance: 0.8,
-          pinned: true,
-          source: "seed",
-        },
-      ]);
+      // 不写样例记忆：记忆必须由用户自己长出来。替用户预设事实（"用户偏好 X"）
+      // 会跟着每一轮注入进 prompt，而每个用户的使用场景都不一样。
 
       await tx.insert(requestUsage).values({
         id: newId("usage"),
